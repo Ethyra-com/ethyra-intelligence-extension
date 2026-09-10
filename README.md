@@ -11,7 +11,8 @@ A browser extension that bulk-downloads and archives your Canvas LMS courses int
 </p>
 
 <p align="center">
-  If this saved you time, a ⭐ helps others find it.
+  If this saved you time, a ⭐ helps others find it.<br>
+  If it saved you a semester, consider <a href="https://github.com/sponsors/jasp-nerd">sponsoring its maintenance</a> 💙
 </p>
 
 ## Why?
@@ -256,6 +257,14 @@ For the full privacy policy, see [PRIVACY.md](PRIVACY.md).
 **Some files are missing** — Files in restricted areas or behind additional permission checks may not be accessible through the API. Files hosted by external LTI tools won't be captured. Check the browser console for specific errors.
 
 **Firefox add-on expired** — Firefox temporary add-ons only last until browser restart. Reload from `about:debugging#/runtime/this-firefox`.
+
+## Support
+
+This extension is free and MIT licensed, and it stays that way. Keeping it working as Canvas changes takes real time, so if it's useful to you, you can [sponsor the project on GitHub](https://github.com/sponsors/jasp-nerd). Sponsoring doesn't buy priority support or faster development — it just makes it possible to keep going.
+
+### Supporters
+
+_Be the first!_
 
 ## Contributing
 
