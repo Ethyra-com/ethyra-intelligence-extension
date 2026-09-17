@@ -1,0 +1,132 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Ethyra Intelligence</title>
+    <style>
+      /* Deliberately self-contained and token-light. The product's own
+         `--lp-*` design tokens live in the Intelligence frontend; copying the
+         whole system into an extension popup would be a second place to
+         maintain it. These are the few values that matter, named the same way,
+         so swapping in the real tokens later is a find-and-replace. */
+      :root {
+        --lp-bg: #14141a;
+        --lp-surface: #1d1d26;
+        --lp-border: #2e2e3a;
+        --lp-text: #f2f2f5;
+        --lp-muted: #9a9aa8;
+        --lp-accent: #ff7a3d;
+        --lp-danger: #ff6b6b;
+        --lp-ok: #4ade80;
+      }
+      * { box-sizing: border-box; }
+      body {
+        width: 360px;
+        margin: 0;
+        padding: 16px;
+        font: 13px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, system-ui, sans-serif;
+        background: var(--lp-bg);
+        color: var(--lp-text);
+      }
+      h1 { font-size: 15px; margin: 0 0 2px; }
+      .sub { color: var(--lp-muted); font-size: 12px; margin: 0 0 14px; }
+      label { display: block; font-size: 12px; color: var(--lp-muted); margin: 10px 0 4px; }
+      input[type="email"], input[type="password"], input[type="url"] {
+        width: 100%;
+        padding: 8px 10px;
+        border: 1px solid var(--lp-border);
+        border-radius: 6px;
+        background: var(--lp-surface);
+        color: var(--lp-text);
+        font: inherit;
+      }
+      button {
+        width: 100%;
+        padding: 9px 12px;
+        margin-top: 12px;
+        border: 0;
+        border-radius: 6px;
+        background: var(--lp-accent);
+        color: #1a1005;
+        font: inherit;
+        font-weight: 600;
+        cursor: pointer;
+      }
+      button:disabled { opacity: 0.5; cursor: default; }
+      button.secondary {
+        background: transparent;
+        border: 1px solid var(--lp-border);
+        color: var(--lp-muted);
+        font-weight: 400;
+      }
+      .row { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+      .muted { color: var(--lp-muted); font-size: 11px; }
+      .error { color: var(--lp-danger); font-size: 12px; margin-top: 10px; }
+      .ok { color: var(--lp-ok); }
+      .bar { height: 6px; border-radius: 3px; background: var(--lp-border); overflow: hidden; margin-top: 10px; }
+      .bar > div { height: 100%; width: 0; background: var(--lp-accent); transition: width 0.2s; }
+      .warnings { margin: 10px 0 0; padding-left: 16px; color: var(--lp-muted); font-size: 11px; }
+      [hidden] { display: none !important; }
+    </style>
+  </head>
+  <body>
+    <h1>Ethyra Intelligence</h1>
+    <p class="sub" id="subtitle">Export your Canvas coursework for analysis.</p>
+
+    <!-- Not on a Canvas page -->
+    <section id="view-not-canvas" hidden>
+      <p class="muted">
+        Open your Canvas site in this tab, then click the Ethyra icon again. Your
+        coursework is read from the page you are signed in to.
+      </p>
+    </section>
+
+    <!-- Signed out -->
+    <section id="view-signin" hidden>
+      <label for="email">Email</label>
+      <input id="email" type="email" autocomplete="username" />
+      <label for="password">Password</label>
+      <input id="password" type="password" autocomplete="current-password" />
+      <button id="signin">Sign in</button>
+      <p class="error" id="signin-error" hidden></p>
+      <p class="muted" style="margin-top: 12px">
+        Uses your Ethyra Intelligence account — the same one as the web app.
+      </p>
+    </section>
+
+    <!-- Signed in, ready -->
+    <section id="view-ready" hidden>
+      <div class="row">
+        <span class="muted" id="who"></span>
+        <button class="secondary" id="signout" style="width: auto; margin: 0; padding: 4px 8px">Sign out</button>
+      </div>
+      <p class="muted" style="margin-top: 14px">
+        Sends the work you have submitted in every active course, with each
+        assignment's instructions, to Ethyra for analysis.
+      </p>
+      <p class="muted" style="margin-top: 8px">
+        No grades. No course files. Nothing from anyone else.
+      </p>
+      <button id="export">Export to Ethyra</button>
+      <p class="error" id="ready-error" hidden></p>
+    </section>
+
+    <!-- Running -->
+    <section id="view-progress" hidden>
+      <p class="muted" id="progress-label">Starting…</p>
+      <div class="bar"><div id="progress-bar"></div></div>
+      <p class="muted" style="margin-top: 10px">
+        Keep this Canvas tab open. Navigating away will cancel the export.
+      </p>
+    </section>
+
+    <!-- Finished -->
+    <section id="view-done" hidden>
+      <p id="done-message"></p>
+      <ul class="warnings" id="done-warnings"></ul>
+      <button id="done-ok">Done</button>
+    </section>
+
+    <script src="popup.js"></script>
+  </body>
+</html>
