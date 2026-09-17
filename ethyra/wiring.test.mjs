@@ -230,6 +230,94 @@ test("embedded files are labelled by whose body they came from", () => {
   assert.match(source, /role: dest\.role \|\| ROLE_INSTRUCTION/);
 });
 
+test("Ethyra mode queues nothing at the archive root", () => {
+  // Upstream writes several files at the root of a course folder — a stylesheet,
+  // a manifest, gradebook CSVs, a broken-links report. All are for a person
+  // opening the folder. This fork uploads the archive instead, and `collect.js`
+  // ships only what an assignment claimed, so a root-level entry cannot be
+  // claimed by anything and is dropped.
+  //
+  // `styles.css` was queued in Ethyra mode for exactly as long as this fork has
+  // existed, because `isMarkdown` is pinned false and the guard read
+  // `if (!isMarkdown)`. Every course of every export therefore produced an
+  // unclaimed-file warning — and that warning was added to surface files being
+  // lost in silence. One that fires on every successful export is one nobody
+  // reads, which would have returned the bug it was written for to invisibility.
+  //
+  // So this checks the class, not the line: every root-level push must be
+  // unreachable in Ethyra mode, whether by an explicit guard or by a content
+  // type `ethyra/profile.js` turns off.
+  const source = read("downloader.js");
+  const lines = source.split("\n");
+
+  const disabled = new Set(
+    [...read("ethyra/profile.js").matchAll(/^\s*(\w+):\s*false\b/gm)].map((m) => m[1])
+  );
+  assert.ok(disabled.size > 0, "ETHYRA_CONTENT_TYPES no longer switches anything off");
+
+  const roots = [];
+  lines.forEach((line, i) => {
+    if (!/^\s*path: "",?$/.test(line)) return;
+    // Only queued entries matter. Upstream's `START_DOWNLOAD` message payload
+    // uses the same shape and never reaches the archive.
+    const open = lines.slice(Math.max(0, i - 12), i).join("\n");
+    if (!open.includes("filesToDownload.push({")) return;
+    roots.push({ line: i + 1, context: lines.slice(Math.max(0, i - 40), i).join("\n") });
+  });
+
+  assert.ok(roots.length >= 4, `expected upstream's root-level writers to still be present, found ${roots.length}`);
+
+  for (const { line, context } of roots) {
+    const guarded =
+      /!ethyra\b/.test(context) ||
+      /if \(ethyra\)[\s\S]*\} else \{/.test(context) ||
+      [...disabled].some((type) => new RegExp(`types\\.${type}\\b`).test(context));
+    assert.ok(guarded, `downloader.js:${line} queues a root-level file reachable in Ethyra mode`);
+  }
+});
+
+test("no message reachable in Ethyra mode names a file this archive does not contain", () => {
+  // The inaccessible-links branch swapped upstream's root-level CSV for a
+  // warning on the upload, and left the progress line still saying the failures
+  // were "listed in _inaccessible_links.csv" — a file the Ethyra archive does
+  // not contain and the student has no folder to look in for.
+  //
+  // Same shape as the 413 message that told students to deselect a course: the
+  // behaviour changed, the sentence describing it did not. The previous test
+  // pins where files are QUEUED; this one pins what is SAID about them, because
+  // fixing one has twice now left the other stale.
+  const source = read("downloader.js");
+  const lines = source.split("\n");
+
+  // Whatever upstream writes at a course root, derived rather than listed — a
+  // new root-level CSV is then covered the day it is added.
+  const rootFiles = [];
+  lines.forEach((line, i) => {
+    if (!/^\s*path: "",?$/.test(line)) return;
+    const block = lines.slice(Math.max(0, i - 12), i).join("\n");
+    if (!block.includes("filesToDownload.push({")) return;
+    const name = block.match(/filename: "([^"]+)"/);
+    if (name) rootFiles.push(name[1]);
+  });
+  assert.ok(rootFiles.length >= 4, `expected upstream's root-level files, found ${rootFiles.join(", ")}`);
+
+  // Comments discuss these files at length, and should keep being able to.
+  code("downloader.js")
+    .split("\n")
+    .forEach((line, i) => {
+      for (const file of rootFiles) {
+        if (!line.includes(file)) continue;
+        // The queue site itself is the declaration, not a claim about the archive.
+        if (new RegExp(`filename: "${file.replace(".", "\\.")}"`).test(line)) continue;
+        assert.match(
+          line,
+          /ethyra/,
+          `downloader.js:${i + 1} names ${file} in text Ethyra mode can reach:\n    ${line.trim()}`
+        );
+      }
+    });
+});
+
 test("files no assignment claims are reported, not silently dropped", () => {
   // `collectExport` uploads only what an assignment claimed. Dropping the rest
   // in silence is what hid the bug above for an entire build.

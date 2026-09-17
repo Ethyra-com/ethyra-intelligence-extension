@@ -515,7 +515,24 @@ async function downloadCourse(courseId, courseName, domain, onProgress, ethyra =
   const isSynthetic = (f) => f.rawBody !== undefined || (f.url && f.url.startsWith("data:"));
 
   // --- Stylesheet for exported HTML ----------------------------------------
-  if (!isMarkdown) {
+  //
+  // Ethyra fork: `isMarkdown` is pinned false here, so `!isMarkdown` was true
+  // and this queued a stylesheet into every course of every export — at the
+  // archive root, where no assignment can claim it.
+  //
+  // It is the same mistake the assignment loop below already guards against,
+  // in the same words: an archive entry nothing claims is a stray. The cost was
+  // not the two kilobytes. `collectExport` warns about unclaimed files, and that
+  // warning exists to surface a real failure — files embedded in a rich-text
+  // submission were being fetched, packaged and dropped in silence. Firing it on
+  // every course of every successful export is how a warning stops being read,
+  // which would have put the bug it was written for back beyond reach.
+  //
+  // The submission documents this fork does emit still link to `styles.css` via
+  // `toHtmlDataUri`. That link now dangles, which is correct: those files exist
+  // to be read by the extraction pipeline, not by a person, and a stylesheet
+  // would be an entry in the archive rather than a rendering.
+  if (!isMarkdown && !ethyra) {
     filesToDownload.push({
       url: `data:text/css;charset=utf-8,${encodeURIComponent(FALLBACK_EXPORT_CSS)}`,
       filename: "styles.css",
@@ -1561,7 +1578,10 @@ async function downloadCourse(courseId, courseName, domain, onProgress, ethyra =
     const otherCourses = [...new Set(inaccessibleLinks.map((l) => l.sourceCourseId).filter(Boolean))];
     const crossCount = inaccessibleLinks.filter((l) => l.sourceCourseId).length;
     const n = inaccessibleLinks.length;
-    let msg = `Warning: ${n} linked file${n === 1 ? "" : "s"} could not be fetched — listed in _inaccessible_links.csv.`;
+    // Ethyra fork: the branch above replaced that CSV with a warning on the
+    // upload, so naming it here points at a file this archive does not contain.
+    const listed = ethyra ? "" : " — listed in _inaccessible_links.csv";
+    let msg = `Warning: ${n} linked file${n === 1 ? "" : "s"} could not be fetched${listed}.`;
     if (crossCount > 0) {
       msg += ` ${crossCount} of them point to another course (${otherCourses.join(", ")}) — usually content carried over from an earlier edition; ask the instructor to relink them.`;
     }
