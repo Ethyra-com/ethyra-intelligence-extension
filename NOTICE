@@ -1,0 +1,78 @@
+Ethyra Intelligence — Canvas Export
+===================================
+
+This is a fork of **canvas-course-downloader** by jasp-nerd, used under the MIT
+License. `LICENSE` is upstream's, retained verbatim as that licence requires,
+and its terms continue to apply to everything in this repository that came from
+it — which is most of the files at the top level.
+
+    https://github.com/jasp-nerd/canvas-course-downloader
+
+A real fork, not a rewrite
+--------------------------
+
+Upstream is a live remote (`git remote -v`), and `git fetch upstream && git merge
+upstream/main` is expected to keep working. That is why the changes below are
+edits in place and additions beside upstream's code, rather than a
+reorganisation: when Canvas changes an endpoint, upstream usually notices first,
+and a merge is how that fix arrives here.
+
+Everything new lives under `ethyra/`. Nothing upstream has ever heard of that
+directory, so it cannot collide.
+
+What changed, and where
+-----------------------
+
+    downloader.js     modified in place, ~160 lines added behind `if (ethyra)`.
+                      With `ethyra` null — every upstream code path — behaviour
+                      is unchanged. See the comment on `downloadCourse`.
+
+    manifest.json     rewritten: our name, our entry points, and three fewer
+                      permissions.
+
+    ethyra/*          original to this fork.
+
+Still present, deliberately not loaded
+--------------------------------------
+
+`ui.js`, `content.js`, `popup.html`, `popup.js`, `background.js`, `options.*`
+and `turndown*` remain in the tree and are absent from `manifest.json`.
+
+They are kept rather than deleted so upstream merges continue to apply cleanly
+to them; a merge that touches a file nothing loads is harmless. `background.js`
+in particular could not be loaded even if we wanted it — it registers a
+`chrome.downloads.onChanged` listener, which would force this extension to
+request a `downloads` permission it never uses and could not justify at review.
+
+What this fork does NOT inherit
+-------------------------------
+
+Upstream mirrors an entire Canvas course to disk — course files, pages, modules,
+discussions, announcements, quizzes — for teachers and students alike, and
+writes it as human-readable HTML or Markdown.
+
+This one collects **one student's own coursework only**, emits it as
+machine-readable JSON alongside the files, and uploads it to Ethyra. The scope is
+narrowed by configuration (`ethyra/profile.js`) rather than by deletion, so the
+code upstream maintains is still here and still mergeable.
+
+Third-party dependencies
+------------------------
+
+    client-zip   MIT, Touffy — https://github.com/Touffy/client-zip
+                 Vendored by upstream as a minified build, unmodified.
+
+Branding
+--------
+
+`icons/` is still upstream's artwork and the extension name is ours. That
+mismatch is fine for local development and must be resolved before any Chrome
+Web Store submission.
+
+Student data
+------------
+
+This extension reads a student's own Canvas coursework — assignment
+instructions, submissions, grades and instructor comments — and transmits it to
+Ethyra for analysis. That is education data subject to FERPA, and it is a
+material difference from upstream, which sends nothing anywhere. See PRIVACY.md.
