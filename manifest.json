@@ -1,14 +1,8 @@
 {
   "manifest_version": 3,
-  "name": "Canvas Course Downloader & Exporter",
-  "description": "Download, export, and back up Canvas LMS course files, pages, assignments, grades, and more into organized folders.",
-  "version": "2.10.4",
-  "browser_specific_settings": {
-    "gecko": {
-      "id": "canvas-course-downloader@jasp-nerd",
-      "strict_min_version": "121.0"
-    }
-  },
+  "name": "Ethyra Intelligence — Canvas Export",
+  "description": "Export your own Canvas coursework to Ethyra Intelligence for analysis against the ACT College and Career Readiness Standards.",
+  "version": "0.1.0",
   "icons": {
     "16": "icons/icon-16.png",
     "48": "icons/icon-48.png",
@@ -17,8 +11,6 @@
   "permissions": [
     "activeTab",
     "declarativeNetRequest",
-    "downloads",
-    "notifications",
     "storage"
   ],
   "host_permissions": [
@@ -37,7 +29,7 @@
     ]
   },
   "background": {
-    "service_worker": "background.js"
+    "service_worker": "ethyra/background.js"
   },
   "content_scripts": [
     {
@@ -46,39 +38,22 @@
       ],
       "js": [
         "client-zip.min.js",
-        "turndown.min.js",
-        "turndown-plugin-gfm.min.js",
         "helpers.js",
         "detector.js",
         "canvas-api.js",
-        "ui.js",
+        "ethyra/profile.js",
+        "ethyra/manifest.js",
         "downloader.js",
-        "content.js"
+        "ethyra/collect.js",
+        "ethyra/archive.js",
+        "ethyra/upload.js",
+        "ethyra/content.js"
       ],
       "run_at": "document_idle"
     }
   ],
-  "web_accessible_resources": [
-    {
-      "resources": ["icons/icon-128.png"],
-      "matches": ["https://*/*"]
-    }
-  ],
-  "options_ui": {
-    "page": "options.html",
-    "open_in_tab": true
-  },
   "action": {
-    "default_popup": "popup.html",
-    "default_title": "Canvas Course Downloader"
-  },
-  "commands": {
-    "download-current": {
-      "suggested_key": {
-        "default": "Ctrl+Shift+D",
-        "mac": "Command+Shift+D"
-      },
-      "description": "Download current course or open course selector"
-    }
+    "default_popup": "ethyra/popup.html",
+    "default_title": "Ethyra Intelligence"
   }
 }
