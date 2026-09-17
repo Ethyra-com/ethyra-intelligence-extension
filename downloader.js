@@ -363,15 +363,46 @@ async function downloadAsZip(files, courseName, settings, log) {
  * @param {string} courseName - Human-readable course name (used for folder paths)
  * @param {string} domain     - Origin URL of the Canvas instance
  * @param {function} onProgress - Optional callback for UI status updates
+ * @param {object|null} ethyra - Ethyra export mode; null for upstream behaviour
+ *
+ * ── Ethyra fork: what `ethyra` changes ─────────────────────────────────
+ *
+ * When null — which is every upstream code path — nothing below behaves
+ * differently. That is deliberate: every `if (ethyra)` is an addition beside
+ * upstream's logic rather than a replacement for it, so `git merge
+ * upstream/main` keeps delivering their Canvas fixes into this file.
+ *
+ * When set, it is a recorder from `ethyra/collect.js` and five things change:
+ *
+ *   1. `types` is pinned to `ETHYRA_CONTENT_TYPES` — the course mirror off,
+ *      the student's own work on. Configuration, not deletion.
+ *   2. Files land under `<Course>/<Assignment>/` rather than `Submissions/…`,
+ *      because one archive now holds every course.
+ *   3. Every queued file carries a `role`, and the teacher's base document for
+ *      a `student_annotation` assignment is labelled as the teacher's even
+ *      though Canvas returns it among the student's attachments.
+ *   4. The rendered `.html` documents are not emitted. The manifest carries the
+ *      handout as data, and a rendered copy would be an archive entry no
+ *      assignment claims.
+ *   5. The function returns the file list instead of downloading it.
  */
-async function downloadCourse(courseId, courseName, domain, onProgress) {
+async function downloadCourse(courseId, courseName, domain, onProgress, ethyra = null) {
   const settings = await loadSettings();
-  const types = settings.contentTypes;
+  const types = ethyra ? { ...ETHYRA_CONTENT_TYPES } : settings.contentTypes;
   // Back-compat: submissions had no separate toggle before v2.9.1 and rode on
   // the "assignments" type. Settings saved by older versions have no
   // `submissions` key, so inherit the assignments choice to preserve behavior.
   if (types.submissions === undefined) types.submissions = types.assignments;
-  const isMarkdown = settings.exportFormat === "markdown";
+  // Ethyra fork: never Markdown. The conversion runs through `htmlToMarkdown`,
+  // which needs `TurndownService` — and `turndown.min.js` is not loaded by this
+  // fork's manifest, because nothing it produces is read by a person.
+  //
+  // In practice the rewrite pass that would call it never fires here: it only
+  // touches entries carrying a `rawBody`, and Ethyra mode emits no rendered
+  // documents at all. This pins that rather than relying on it, because a
+  // student with `exportFormat: "markdown"` saved from upstream would otherwise
+  // be one regression away from a ReferenceError mid-export.
+  const isMarkdown = !ethyra && settings.exportFormat === "markdown";
   const docExt = isMarkdown ? "md" : "html";
   const log = (msg) => {
     console.log(`[Canvas Downloader] [${courseName}] ${msg}`);
@@ -387,10 +418,13 @@ async function downloadCourse(courseId, courseName, domain, onProgress) {
     try {
       const perm = await chrome.runtime.sendMessage({ type: "ENSURE_CDN_PERMISSION" });
       if (!perm?.granted) {
-        showToast(
-          "Some submitted files may be skipped. Allow access to canvas-user-content.com in Settings to include them.",
-          "info"
-        );
+        const message =
+          "Some submitted files may be skipped. Allow access to canvas-user-content.com to include them.";
+        // Ethyra fork: the only in-page UI call this mode can still reach.
+        // Routed to the recorder so the warning travels with the upload and
+        // `ui.js` is genuinely unnecessary rather than merely mostly unused.
+        if (ethyra) ethyra.warn(message);
+        else showToast(message, "info");
       }
     } catch (err) {
       console.warn("[Canvas Downloader] CDN permission check failed:", err);
@@ -506,7 +540,16 @@ async function downloadCourse(courseId, courseName, domain, onProgress) {
     inaccessibleLinks.push({ source, text: (link.textContent || "").trim(), url: ref, status, sourceCourseId });
   }
 
-  async function extractLinkedFiles(html, source) {
+  /**
+   * Files referenced from an HTML body, fetched and queued.
+   *
+   * Ethyra fork: `dest` moves them out of the flat `Extracted_Files/` folder.
+   * Upstream files them by origin, which loses which assignment a handout was a
+   * handout FOR — and an assignment-level stage downstream cannot use a teacher's
+   * document it cannot trace back to an assignment. Passing the assignment's own
+   * folder keeps them together and lets them be labelled the teacher's.
+   */
+  async function extractLinkedFiles(html, source, dest = null) {
     const doc = new DOMParser().parseFromString(html, "text/html");
     const links = doc.querySelectorAll(
       'a[href*="/files/"], img[src*="/files/"], iframe[src*="/files/"], source[src*="/files/"]'
@@ -566,12 +609,16 @@ async function downloadCourse(courseId, courseName, domain, onProgress) {
           filesToDownload.push({
             url: data.url,
             filename: data.display_name || (link.textContent || "").trim() || `file_${id}`,
-            path: "Extracted_Files/",
+            path: dest ? dest.path : "Extracted_Files/",
             size: data.size || 0,
             contentType: data["content-type"] || "",
             updatedAt: data.updated_at || data.modified_at || "",
             canvasId: fileId,
             ...(sourceCourseId ? { sourceCourseId } : {}),
+            // The teacher wrote this, not the student. Without the label the
+            // backend guesses from the filename, and a handout read as a
+            // submission yields a proficiency level for prose nobody here wrote.
+            ...(dest ? { role: ROLE_INSTRUCTION } : {}),
           });
         }
       } catch (err) {
@@ -603,17 +650,50 @@ async function downloadCourse(courseId, courseName, domain, onProgress) {
   const needAssignmentList = types.assignments || types.submissions || (isTeacher && types.grades);
   if (needAssignmentList) {
     log("Fetching assignments...");
-    assignments = await fetchAllPages(api("assignments?per_page=100"));
+    // Ethyra fork: `submission` is the student-safe include — it returns only
+    // the calling user's own submission, which is what decides whether an
+    // assignment is worth a detail call at all.
+    //
+    // `score_statistics` is deliberately NOT requested. It carries the class
+    // mean and median, and this export collects no marks: not the student's own
+    // score, and certainly not a distribution describing their classmates.
+    assignments = await fetchAllPages(
+      api(ethyra ? "assignments?per_page=100&include[]=submission" : "assignments?per_page=100")
+    );
   }
   if (types.assignments) {
+    // Ethyra fork: the group NAME is what a reader wants and Canvas only puts
+    // the id on an assignment, so resolve it once for the whole course rather
+    // than leaving the manifest carrying a number nobody can interpret.
+    let groupNames = null;
+    if (ethyra) {
+      const groups = await fetchAllPages(api("assignment_groups?per_page=100"));
+      groupNames = new Map(groups.map((g) => [String(g.id), g.name]));
+    }
+
     for (const a of assignments) {
+      // Ethyra fork: teacher-attached files go to this assignment's own folder
+      // and are labelled the teacher's. Everything else about this loop — the
+      // description read, the rubric, the linked-file harvest — is upstream's.
+      const dest = ethyra ? { path: ethyra.assignmentFolder(a) } : null;
+
       let body = "";
       if (a.due_at) body += `<p><strong>Due:</strong> ${formatDate(a.due_at)}</p>`;
       if (a.description) {
         body += `<div>${cleanCanvasHtml(a.description)}</div>`;
-        if (types.linkedFiles) await extractLinkedFiles(a.description, `Assignment: ${a.name}`);
+        if (types.linkedFiles) await extractLinkedFiles(a.description, `Assignment: ${a.name}`, dest);
       }
       body += renderRubricDefinition(a.rubric);
+
+      if (ethyra) {
+        // The handout travels as data in the manifest. Emitting a rendered copy
+        // too would put an archive entry in front of the backend that no
+        // assignment claims, which it reports as a stray and drops.
+        a.assignment_group_name = groupNames.get(String(a.assignment_group_id)) || null;
+        ethyra.recordAssignment(a);
+        continue;
+      }
+
       const safeName = sanitizeFilename(a.name).substring(0, 100);
       filesToDownload.push(buildDocEntry(a.name, body, safeName, "Assignments/", "assignment", String(a.id)));
     }
@@ -646,6 +726,20 @@ async function downloadCourse(courseId, courseName, domain, onProgress) {
     const multi = attempts.length > 1;
     const attemptLabel = (h) => (multi ? `Attempt ${h.attempt || "?"} - ` : "");
 
+    // ── Ethyra fork: the one case a submission attachment is NOT the student's
+    //
+    // For a `student_annotation` assignment Canvas CLONES the teacher's
+    // annotatable document into the student's submission, so it arrives here in
+    // `h.attachments` and the API itself calls it the student's. Reading it as
+    // their writing produces a proficiency level, with a verbatim quote, for a
+    // document the teacher wrote — and nothing downstream can tell that from a
+    // correct reading.
+    //
+    // `annotatable_attachment_id` is the only field that says otherwise. This is
+    // what a real export turned up: a teacher's marking criteria PDF sitting in
+    // a submission folder beside a genuine essay.
+    const annotatableId = String(a.annotatable_attachment_id || "");
+
     for (const h of attempts) {
       for (const att of h.attachments || []) {
         const fileId = String(att.id || "");
@@ -660,6 +754,15 @@ async function downloadCourse(courseId, courseName, domain, onProgress) {
             contentType: att["content-type"] || "",
             updatedAt: att.updated_at || att.modified_at || "",
             canvasId: fileId,
+            ...(ethyra
+              ? {
+                  role:
+                    annotatableId && fileId === annotatableId
+                      ? ROLE_INSTRUCTION
+                      : ROLE_SUBMISSION,
+                  attempt: h.attempt ?? null,
+                }
+              : {}),
           });
         }
       }
@@ -691,6 +794,32 @@ async function downloadCourse(courseId, courseName, domain, onProgress) {
       }
       body += "</ul>";
     }
+    if (ethyra) {
+      // ── Ethyra fork: the inline submission, on its own ────────────────
+      //
+      // Upstream folds `h.body` into the summary page above, mixed in with
+      // headings and the grade. A Canvas rich-text submission IS the student's
+      // writing, so it goes out as its own file — the backend reads HTML and
+      // will quote from it, and a quote has to be locatable in a document the
+      // student actually wrote rather than in a page about them.
+      //
+      // The summary page itself is not emitted: everything on it travels as
+      // data in the manifest, and a rendered copy would be an archive entry no
+      // assignment claims.
+      for (const h of attempts) {
+        if (!h.body) continue;
+        filesToDownload.push({
+          url: `data:text/html;charset=utf-8,${encodeURIComponent(h.body)}`,
+          filename: `submission_text_${h.attempt || 1}.html`,
+          path: folder,
+          role: ROLE_SUBMISSION,
+          attempt: h.attempt ?? null,
+        });
+      }
+      ethyra.recordSubmission(a, s);
+      return true;
+    }
+
     const stem = sanitizeFilename(studentName).substring(0, 80) || "submission";
     filesToDownload.push(buildDocEntry(`${a.name} — ${studentName}`, body, stem, folder, "submission", null));
     return true;
@@ -748,7 +877,16 @@ async function downloadCourse(courseId, courseName, domain, onProgress) {
       let s;
       try {
         const res = await fetchWithRetry(
-          api(`assignments/${a.id}/submissions/self?include[]=user&include[]=submission_comments&include[]=submission_history&include[]=rubric_assessment`)
+          // Ethyra fork: only the name and the attempt history. Not
+          // `submission_comments` (the instructor's feedback thread) and not
+          // `rubric_assessment` (their marks against each criterion) — this
+          // export collects what the student produced, not what was said about
+          // it. Asking for less is the only way not to receive it.
+          api(
+            ethyra
+              ? `assignments/${a.id}/submissions/self?include[]=user&include[]=submission_history`
+              : `assignments/${a.id}/submissions/self?include[]=user&include[]=submission_comments&include[]=submission_history&include[]=rubric_assessment`
+          )
         );
         if (!res.ok) continue;
         s = await res.json();
@@ -758,7 +896,11 @@ async function downloadCourse(courseId, courseName, domain, onProgress) {
       }
       const safeAssignment = sanitizeFilename(a.name).substring(0, 80);
       const studentName = s.user?.sortable_name || s.user?.name || "You";
-      if (await renderSubmission(a, s, `Submissions/${safeAssignment}/`, studentName, "")) {
+      // Ethyra fork: `<Course>/<Assignment>/` rather than `Submissions/<Assignment>/`.
+      // One archive now carries every course, so the course has to be in the
+      // path — and the backend reads the first component as the course.
+      const folder = ethyra ? ethyra.assignmentFolder(a) : `Submissions/${safeAssignment}/`;
+      if (await renderSubmission(a, s, folder, studentName, "")) {
         studentSubmissionCount++;
       }
     }
@@ -1352,11 +1494,24 @@ async function downloadCourse(courseId, courseName, domain, onProgress) {
     for (const l of inaccessibleLinks) {
       rows.push([l.source, l.text, l.url, l.status, l.sourceCourseId || ""].map(csvCell).join(","));
     }
-    filesToDownload.push({
-      url: `data:text/csv;charset=utf-8,${encodeURIComponent(rows.join("\n"))}`,
-      filename: "_inaccessible_links.csv",
-      path: "",
-    });
+    // Ethyra fork: the report becomes a warning on the upload rather than a
+    // root-level CSV. Same information, and it does not become an archive entry
+    // that no assignment claims.
+    if (ethyra) {
+      ethyra.warn(
+        `${inaccessibleLinks.length} linked file(s) could not be fetched: ` +
+          inaccessibleLinks
+            .slice(0, 5)
+            .map((l) => l.text || l.url)
+            .join(", ")
+      );
+    } else {
+      filesToDownload.push({
+        url: `data:text/csv;charset=utf-8,${encodeURIComponent(rows.join("\n"))}`,
+        filename: "_inaccessible_links.csv",
+        path: "",
+      });
+    }
 
     const otherCourses = [...new Set(inaccessibleLinks.map((l) => l.sourceCourseId).filter(Boolean))];
     const crossCount = inaccessibleLinks.filter((l) => l.sourceCourseId).length;
@@ -1394,11 +1549,17 @@ async function downloadCourse(courseId, courseName, domain, onProgress) {
     },
   };
 
-  filesToDownload.push({
-    url: `data:application/json;charset=utf-8,${encodeURIComponent(JSON.stringify(manifest, null, 2))}`,
-    filename: "manifest.json",
-    path: "",
-  });
+  // Ethyra fork: upstream's manifest describes one course for a human reading
+  // the folder. Ours describes every course for a parser, is named
+  // `ethyra-manifest.json`, and is written once by the caller after all courses
+  // are collected — so this one is skipped rather than shipped alongside it.
+  if (!ethyra) {
+    filesToDownload.push({
+      url: `data:application/json;charset=utf-8,${encodeURIComponent(JSON.stringify(manifest, null, 2))}`,
+      filename: "manifest.json",
+      path: "",
+    });
+  }
 
   // --- Path length safety (Windows 260-char limit) -------------------------
   const safeCourse = sanitizeFilename(courseName);
@@ -1490,6 +1651,11 @@ async function downloadCourse(courseId, courseName, domain, onProgress) {
 
   // --- ZIP mode or individual download handoff --------------------------------
   log(`${filesToDownload.length} files ready.`);
+
+  // Ethyra fork: this course is one part of one archive, and the archive is
+  // uploaded rather than saved. Hand the list back and let the caller decide —
+  // the download paths below are untouched and still run for upstream's flow.
+  if (ethyra) return filesToDownload;
 
   if (settings.zipMode && typeof downloadZip !== "undefined") {
     const estimatedBytes = filesToDownload.reduce((sum, f) => sum + (f.size || 0), 0);
