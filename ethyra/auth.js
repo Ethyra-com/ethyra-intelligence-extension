@@ -28,13 +28,36 @@
  * The access token is cached in memory with its expiry, and refreshed on
  * demand. Losing it to a worker restart costs one round trip.
  *
+ * ── This runs in the SERVICE WORKER, and that is load-bearing ─────────
+ *
+ * `auth.js` is `importScripts`'d by `background.js` and is deliberately absent
+ * from the content-script list in `manifest.json`. Nothing here may ever run in
+ * the Canvas page, and a future change that adds it to that list is a security
+ * regression rather than a convenience.
+ *
+ * Two reasons, and the second is the important one:
+ *
+ * 1. A worker fetch to a host in `host_permissions` is exempt from CORS, so the
+ *    backend does not have to admit any extension origin to serve these routes.
+ *    `https://api.ethyra.com/*` is listed there for exactly this.
+ *
+ * 2. **A content script shares its origin with the page it runs in, for CORS
+ *    purposes.** Anything the page's own scripts could be allowed to call, they
+ *    could call too. Authenticating from the Canvas page would mean the backend
+ *    admitting Canvas origins on `/api/auth/*` — and since the refresh cookie is
+ *    `SameSite=None` and `/refresh` needs no bearer token, any script on any
+ *    Canvas page could then trade that cookie for a readable access token.
+ *
+ * The backend enforces its half: Canvas origins are scoped to the upload route
+ * only, and a refresh authenticated by the cookie never returns a token in the
+ * body whatever header it carries. Both halves have to hold.
+ *
  * ── The backend seam this depends on ──────────────────────────────────
  *
- * `POST /api/auth/refresh` already accepts a refresh token from the JSON body
- * as well as from the cookie. What it does NOT yet do is RETURN one in the
- * body — it only ever sets the cookie. That is a small backend change gated on
- * an `X-Client: extension` header; until it lands, sign-in here will succeed and
- * the first refresh will fail.
+ * `POST /api/auth/refresh` accepts a refresh token from the JSON body as well as
+ * from the cookie, and returns a rotated one in the body when `X-Client:
+ * extension` is set AND the call authenticated from the body rather than a
+ * cookie. Both conditions are needed; see `app/routers/auth.py`.
  */
 
 const ETHYRA_STORAGE_KEY = "ethyra_session";

@@ -17,9 +17,55 @@
  * It is destroyed whenever it loses focus, which during a long export is nearly
  * always. So it owns no state: every view is rendered from what the service
  * worker reports on open, and progress is polled rather than pushed.
+ *
+ * ── The popup is also the injector ────────────────────────────────────
+ *
+ * It is the only place that can be, which is why the manifest declares no
+ * `content_scripts` at all — see `CONTENT_SCRIPTS` below.
  */
 
 const POLL_MS = 600;
+
+/**
+ * The export bundle, injected on demand. Order matters.
+ *
+ * ── Why the manifest does not declare these ───────────────────────────
+ *
+ * Upstream matches every HTTPS host, because a downloader has to put a button on
+ * whatever Canvas the user is looking at and self-hosted instances are on
+ * arbitrary domains. `detector.js` then decides at runtime, by DOM signals, and
+ * that is how self-hosted Canvas is supported here too — the backend has a whole
+ * `CANVAS_ORIGINS` setting for those hosts.
+ *
+ * Inheriting that match pattern meant Chrome injecting this entire bundle into
+ * every HTTPS page: banking, email, everything. Nothing ran — `content.js` is
+ * one big `if (isCanvas())` — but "nothing ran" is a promise kept by a runtime
+ * guard, and PRIVACY.md makes the stronger claim that the extension does not run
+ * on non-Canvas sites at all.
+ *
+ * Narrowing the pattern to `*.instructure.com` would have made that claim true
+ * by dropping self-hosted Canvas, which is a supported configuration. So the
+ * declaration goes away instead: `activeTab` grants this popup temporary access
+ * to the one tab the student had open when they clicked the toolbar icon, for
+ * ANY host, and nothing is injected anywhere until that click. The permission
+ * table in PRIVACY.md already described this mechanism; now it is the mechanism.
+ */
+const CONTENT_SCRIPTS = [
+  "client-zip.min.js",
+  "helpers.js",
+  "detector.js",
+  "canvas-api.js",
+  "ethyra/profile.js",
+  "ethyra/manifest.js",
+  "downloader.js",
+  "ethyra/collect.js",
+  "ethyra/archive.js",
+  "ethyra/upload.js",
+  "ethyra/content.js",
+];
+
+/** Set by `content.js` on load, whether or not the page turned out to be Canvas. */
+const LOADED_FLAG = "__ethyraContentScriptLoaded";
 
 const els = {};
 for (const id of [
@@ -68,6 +114,35 @@ async function askPage(message) {
 }
 
 const askWorker = (message) => chrome.runtime.sendMessage(message);
+
+/**
+ * Put the export bundle in the tab, once.
+ *
+ * The guard is not an optimisation. These files declare top-level `const`s, so
+ * evaluating them a second time in the same isolated world throws
+ * `SyntaxError: Identifier has already been declared` and takes the listener
+ * registered by the first injection down with it — an export that worked on the
+ * first popup open and died on the second.
+ *
+ * Failure here is ordinary rather than exceptional: `chrome://` pages, the Web
+ * Store, and a PDF viewer all refuse injection. The caller reads it the same way
+ * it reads a failed ping — this tab is not Canvas.
+ */
+async function ensureContentScript(tabId) {
+  try {
+    const [probe] = await chrome.scripting.executeScript({
+      target: { tabId },
+      func: (flag) => window[flag] === true,
+      args: [LOADED_FLAG],
+    });
+    if (probe?.result) return true;
+
+    await chrome.scripting.executeScript({ target: { tabId }, files: CONTENT_SCRIPTS });
+    return true;
+  } catch {
+    return false;
+  }
+}
 
 // ── Rendering ────────────────────────────────────────────────────────────
 
@@ -145,7 +220,15 @@ function stopPolling() {
 // ── Views ────────────────────────────────────────────────────────────────
 
 async function showReady(session) {
-  // The export reads Canvas from the page, so the tab has to be one.
+  // The export reads Canvas from the page, so the tab has to be one. Nothing is
+  // in the page until this line — the click that opened this popup is what
+  // grants access to that tab, and to no other.
+  const tab = await activeTab();
+  if (tab?.id) await ensureContentScript(tab.id);
+
+  // The bundle loads everywhere it is injected; `content.js` answers a ping only
+  // when `isCanvas()` held. So silence still means "not Canvas", exactly as it
+  // did when the manifest decided where to inject.
   const alive = await askPage({ type: "ETHYRA_PING" });
   if (!alive?.ok) {
     show("not-canvas");

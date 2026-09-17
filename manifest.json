@@ -11,13 +11,13 @@
   "permissions": [
     "activeTab",
     "declarativeNetRequest",
+    "scripting",
     "storage"
   ],
   "host_permissions": [
-    "*://*.instructure.com/*"
-  ],
-  "optional_host_permissions": [
-    "*://*.canvas-user-content.com/*"
+    "*://*.instructure.com/*",
+    "*://*.canvas-user-content.com/*",
+    "https://api.ethyra.com/*"
   ],
   "declarative_net_request": {
     "rule_resources": [
@@ -31,27 +31,6 @@
   "background": {
     "service_worker": "ethyra/background.js"
   },
-  "content_scripts": [
-    {
-      "matches": [
-        "https://*/*"
-      ],
-      "js": [
-        "client-zip.min.js",
-        "helpers.js",
-        "detector.js",
-        "canvas-api.js",
-        "ethyra/profile.js",
-        "ethyra/manifest.js",
-        "downloader.js",
-        "ethyra/collect.js",
-        "ethyra/archive.js",
-        "ethyra/upload.js",
-        "ethyra/content.js"
-      ],
-      "run_at": "document_idle"
-    }
-  ],
   "action": {
     "default_popup": "ethyra/popup.html",
     "default_title": "Ethyra Intelligence"

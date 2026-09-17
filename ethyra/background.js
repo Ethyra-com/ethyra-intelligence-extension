@@ -56,21 +56,37 @@ async function getApiUrl() {
 }
 
 /**
- * Ask for access to Canvas's CDN, where submitted files actually live.
+ * Confirm access to Canvas's CDN, where submitted files actually live.
  *
- * Kept from upstream's worker because `downloader.js` still sends this message
- * and the reason is unchanged: `optional_host_permissions` can only be
- * requested from a user gesture, and the content script has no way to do it.
- * Denial is non-fatal — those files fail individually and are reported.
+ * A CHECK, never a request — and that distinction was a real bug.
+ *
+ * Upstream declares this origin optional and asks for it at runtime. In MV3
+ * `chrome.permissions.request()` only works inside an active user gesture; a
+ * gesture survives exactly one synchronous message hop from a UI context, and
+ * dies at the first `await`. This handler failed all three ways at once: the
+ * message arrives from a CONTENT SCRIPT several async hops into an export, the
+ * listener body is already async before reaching the switch, and the old
+ * implementation awaited `contains()` before requesting. It could not succeed —
+ * not "might be denied", could not succeed.
+ *
+ * What made it invisible is what the caller did next: warn, continue, fail the
+ * CDN fetches individually, and let `pruneFailed` rewrite the manifest to match
+ * whatever downloaded. The archive stayed internally consistent, so the backend
+ * had no way to tell a student whose files were unreachable from one who had
+ * submitted less.
+ *
+ * So the origin moved to `host_permissions`, granted at install. The one
+ * remaining question is whether it is actually present, and a `false` here means
+ * a broken install rather than a preference — the caller aborts.
  */
 async function ensureCdnPermission() {
-  const permission = { origins: ["https://*.canvas-user-content.com/*"] };
-  if (await chrome.permissions.contains(permission)) return { granted: true };
-  try {
-    return { granted: await chrome.permissions.request(permission) };
-  } catch {
-    return { granted: false };
+  const granted = await chrome.permissions.contains({
+    origins: ["https://*.canvas-user-content.com/*"],
+  });
+  if (!granted) {
+    console.error("[Ethyra] The canvas-user-content.com host permission is missing from this install.");
   }
+  return { granted };
 }
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {

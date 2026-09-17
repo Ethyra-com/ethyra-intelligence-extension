@@ -58,8 +58,10 @@ cannot be undone by a bug.
   permissions this extension never asks for and could not use.
 - **No course materials library.** Course files, pages, modules, announcements,
   discussions, quizzes and the syllabus are not collected.
-- **No browsing history.** The extension activates only on Canvas pages, and
-  only reads Canvas's own API.
+- **No browsing history.** Nothing of the extension is placed in any web page
+  until you click its toolbar icon, and then only in the one tab you had open.
+  It is not present on the pages you visit, so there is nothing there to watch
+  them. Once placed, it reads Canvas's own API and nothing else.
 
 ## Where it goes, and who can see it
 
@@ -75,10 +77,17 @@ or by Microsoft on Ethyra's behalf:
 | Ethyra Intelligence API | the archive | to parse and store it |
 | Microsoft Azure Blob Storage | your submitted files | storage |
 | Microsoft Azure AI Foundry | the **text** of your work and your assignment instructions | the analysis itself |
-| Microsoft Azure Document Intelligence | scanned or photographed pages only | to read text from images |
 
 **Your coursework is sent to an AI service to be analysed.** That is what the
 product does, and it is the most important sentence in this document.
+
+This table lists the services that receive your work **today**, verified against
+the code rather than against the design. Azure Document Intelligence was listed
+here and has been removed: the dependency and its configuration exist, but
+nothing in the backend calls it, so no coursework reaches it. The practical
+consequence is that a scanned or photographed page yields no text and is not
+analysed. Adding OCR means adding a row back to this table, and a paragraph here,
+in the same change.
 
 Your data is **not** sold, rented, or shared with advertisers, data brokers, or
 any party not listed above. It is not used to train third-party AI models.
@@ -100,15 +109,42 @@ in the page itself.
 - **Nothing happens until you click Export.** Installing the extension, or
   opening Canvas with it installed, transmits nothing.
 - **Sign out** from the extension popup to remove the stored token.
-- **Delete an upload** from the Ethyra Intelligence web app. Deleting removes
-  both the stored files and the records derived from them.
+- **Delete an upload** from the Ethyra Intelligence web app. This removes your
+  submitted files from storage, and the analysis built on them — the levels,
+  the quoted evidence and the assignment records — so your profile rewinds to
+  what the remaining uploads support.
+
+  `[TODO: two things currently survive that deletion and this bullet must say so
+  before publication, or be made true by changing the backend. (a) The extracted
+  text of each document is stored keyed on its content hash, deliberately shared
+  across all users so a common worksheet is read once; it carries no user id and
+  the delete endpoint does not touch it. (b) The cached model responses over that
+  text, and the profile narrative, likewise survive. See app/models/canvas.py
+  Extraction, app/models/analysis.py AgentCache and ProfileNarrative. Deciding
+  between "disclose it" and "delete it" is a product decision, not a wording
+  one.]`
 - **Uninstall** to remove all locally stored data.
 
 ## Retention
 
 `[TODO: state the retention period for uploaded coursework and for derived
-analysis, and whether deletion is immediate or on a schedule. Do not publish a
-period that the backend does not actually enforce.]`
+analysis.`
+
+`As of 2026-09-17 the answer the code gives is "indefinitely": there is no
+expiry, no scheduled purge and no blob lifecycle policy anywhere in the backend
+repository — nothing is removed except by the delete endpoint above, which a
+person has to call. Deletion through that endpoint is immediate and synchronous,
+not scheduled.`
+
+`So this section has two honest endings and they are not interchangeable: state
+that coursework is kept until the student deletes it, or implement a retention
+period first and state that. Do not write a period the backend does not enforce —
+a stated 12 months with no mechanism behind it is worse than an honest
+"indefinitely", because it is checkable and wrong.`
+
+`If a lifecycle policy was set by hand in the Azure portal, it is not in the
+repository and cannot be reviewed here; put it in infrastructure-as-code before
+relying on it in this document.]`
 
 ## Student data and FERPA
 
@@ -127,13 +163,21 @@ answer determines what this section must say.]`
 | Permission | Why |
 |---|---|
 | `storage` | to keep you signed in between exports |
-| `activeTab` | to read your coursework from the Canvas tab, only when you click Export |
+| `activeTab` | access to the single tab you have open when you click the extension's icon, and to no other |
+| `scripting` | to place the export code in that tab at that moment — it is not placed in advance, and not in any other tab |
 | `declarativeNetRequest` | to allow your own submitted files to be fetched from Canvas's file host |
 | `*://*.instructure.com/*` | to reach Canvas's API |
-| `*://*.canvas-user-content.com/*` (optional) | where Canvas actually stores submitted files; requested when first needed, and declining only means some files are skipped |
+| `*://*.canvas-user-content.com/*` | where Canvas actually stores submitted files — reaching it is not optional for an extension whose purpose is exporting them |
+| `https://api.ethyra.com/*` | to sign in and upload |
 
 The extension requests **no** permission to download files, show notifications,
-read your tabs, or run on non-Canvas sites.
+or read your tabs. It holds no standing permission over any site other than
+Canvas and Ethyra: `activeTab` is granted by your click, covers one tab, and
+lapses when that tab navigates.
+
+Self-hosted Canvas instances live on ordinary school domains rather than on
+`instructure.com`, and `activeTab` is how the extension works on them without
+holding a permission over every site on the web in order to reach a handful.
 
 ## Changes to this policy
 

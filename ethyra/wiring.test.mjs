@@ -23,9 +23,35 @@ import assert from "node:assert/strict";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 const manifest = JSON.parse(readFileSync(join(ROOT, "manifest.json"), "utf8"));
-const scripts = manifest.content_scripts[0].js;
 
 const read = (rel) => readFileSync(join(ROOT, rel), "utf8");
+
+/**
+ * The injection order, read from the popup.
+ *
+ * It used to live in `manifest.json`, which declared the bundle on every HTTPS
+ * page. The popup now injects it into one tab on demand, so the ordered list
+ * moved there and so did this test's source of truth. Parsed out of the source
+ * rather than imported: `popup.js` is a browser script that touches `document`
+ * at load, and `import`ing it here would run that.
+ */
+const scripts = (() => {
+  const list = read("ethyra/popup.js").match(/const CONTENT_SCRIPTS = \[([\s\S]*?)\];/);
+  assert.ok(list, "ethyra/popup.js no longer declares CONTENT_SCRIPTS");
+  return [...list[1].matchAll(/"([^"]+)"/g)].map((m) => m[1]);
+})();
+
+/**
+ * Source with comments removed.
+ *
+ * For assertions of the form "this file must not CALL x". These files explain
+ * their reasoning at length, and prose that names the very API it is explaining
+ * why not to call would otherwise fail the check it exists to document.
+ */
+const code = (rel) =>
+  read(rel)
+    .replace(/\/\*[\s\S]*?\*\//g, "")
+    .replace(/^\s*\/\/.*$/gm, "");
 
 /** Files that must provide each symbol, and the file that consumes it. */
 const REQUIRED = [
@@ -76,6 +102,62 @@ test("each cross-file symbol is defined, and loaded before its consumer", () => 
   }
 });
 
+test("nothing is injected until the student opens the popup", () => {
+  // Inherited from upstream, the manifest matched every HTTPS host, so Chrome
+  // put this whole bundle into every page the student visited. `content.js`
+  // guarded itself with `isCanvas()` so nothing RAN — but PRIVACY.md promises
+  // the extension "does not run on non-Canvas sites", and a promise kept by a
+  // runtime guard inside code that is already loaded is a weaker thing than the
+  // sentence claims.
+  //
+  // Narrowing the pattern to `*.instructure.com` would have traded that for
+  // dropping self-hosted Canvas, which `detector.js` supports on purpose and the
+  // backend has a `CANVAS_ORIGINS` setting for. So the declaration is gone
+  // entirely and `activeTab` does the work — it covers any host, but only the
+  // one tab, and only after a click.
+  assert.ok(
+    !manifest.content_scripts,
+    "a content_scripts declaration injects on page load, before any student has asked for anything"
+  );
+  assert.ok(manifest.permissions.includes("scripting"), "chrome.scripting is how the popup injects");
+  assert.ok(manifest.permissions.includes("activeTab"), "activeTab is what scopes the injection to one tab");
+
+  // The alternative to activeTab is a host permission broad enough to inject
+  // anywhere, which would put the grant back at install time.
+  for (const origin of manifest.host_permissions) {
+    assert.ok(!/^\*:\/\/\*\/|^https?:\/\/\*\//.test(origin), `${origin} is an all-hosts permission`);
+  }
+
+  const popup = code("ethyra/popup.js");
+  assert.match(popup, /chrome\.scripting\.executeScript/);
+  // Injection is scoped to a tab id the popup looked up, never to a whole window
+  // or to every frame of every tab.
+  assert.ok(!/allFrames:\s*true/.test(popup), "the export runs in the top frame only");
+});
+
+test("the bundle is injected at most once per tab", () => {
+  // These files declare top-level `const`s. A second evaluation in the same
+  // isolated world throws `Identifier has already been declared`, killing the
+  // listener the first injection registered — so an export would work on the
+  // first popup open and be dead on the second.
+  const popup = code("ethyra/popup.js");
+  assert.match(popup, /LOADED_FLAG/, "the popup must probe before it injects");
+
+  const probe = popup.match(/executeScript\(\{[\s\S]*?func:[\s\S]*?\}\)/);
+  assert.ok(probe, "the probe injection moved or was renamed");
+  assert.ok(
+    popup.indexOf(probe[0]) < popup.indexOf("files: CONTENT_SCRIPTS"),
+    "the probe must run before the bundle, or it can never prevent anything"
+  );
+
+  // Set outside the `isCanvas()` block: a non-Canvas tab is injected too — it
+  // just does nothing — and re-injecting there throws exactly the same way.
+  const content = read("ethyra/content.js");
+  const flag = content.indexOf("window.__ethyraContentScriptLoaded = true");
+  assert.ok(flag !== -1, "content.js must announce that it loaded");
+  assert.ok(flag < content.indexOf("if (isCanvas())"), "the flag must be set before the Canvas check");
+});
+
 test("ui.js is not loaded, and nothing reachable in Ethyra mode calls it", () => {
   // The popup replaced the in-page panel, so `ui.js` is deliberately absent.
   // `downloader.js` still references three of its functions; every one must sit
@@ -124,6 +206,161 @@ test("the popup loads its own script and nothing else", () => {
   const html = read(manifest.action.default_popup);
   const srcs = [...html.matchAll(/<script src="([^"]+)"/g)].map((m) => m[1]);
   assert.deepEqual(srcs, ["popup.js"]);
+});
+
+test("embedded files are labelled by whose body they came from", () => {
+  // A file linked from an assignment DESCRIPTION is the teacher's; a file the
+  // student embedded in their own rich-text SUBMISSION is theirs. Both must
+  // reach `extractLinkedFiles` with a destination, because a call without one
+  // queues into `Extracted_Files/` where no assignment claims it — and an
+  // unclaimed file never makes it into the archive.
+  const source = read("downloader.js");
+
+  const description = source.match(/extractLinkedFiles\(\s*a\.description[^;]*?\)/s);
+  assert.ok(description, "the assignment-description call site moved or was renamed");
+  assert.match(description[0], /\bdest\b/, "the description call must pass a destination");
+
+  const submission = source.match(/extractLinkedFiles\(\s*h\.body[^;]*?\)/s);
+  assert.ok(submission, "the submission-body call site moved or was renamed");
+  assert.match(submission[0], /ROLE_SUBMISSION/, "a file the student embedded is the student's");
+  assert.match(submission[0], /folder/, "it belongs in the assignment's own folder");
+
+  // The default stays the teacher's, since the description call is the one that
+  // omits a role.
+  assert.match(source, /role: dest\.role \|\| ROLE_INSTRUCTION/);
+});
+
+test("files no assignment claims are reported, not silently dropped", () => {
+  // `collectExport` uploads only what an assignment claimed. Dropping the rest
+  // in silence is what hid the bug above for an entire build.
+  const source = read("ethyra/collect.js");
+  assert.match(source, /unclaimed/);
+  assert.match(source, /warnings\.push\(/);
+});
+
+test("the CDN host permission is required, never requested at runtime", () => {
+  // Submitted files are served from canvas-user-content.com, so reaching it is
+  // not optional for an extension whose whole job is uploading them.
+  //
+  // It also could not be obtained at runtime. MV3 requires
+  // `chrome.permissions.request()` to run inside an active user gesture, which
+  // survives one synchronous message hop from a UI context — and this check
+  // arrives from a content script several async hops into an export. Requesting
+  // there could not succeed, and the failure was invisible: the fetches failed
+  // individually, `pruneFailed` rewrote the manifest to match, and the backend
+  // received a smaller, internally consistent, wrong picture of the student.
+  const CDN = "*://*.canvas-user-content.com/*";
+  assert.ok(manifest.host_permissions.includes(CDN), "the CDN origin must be a required host permission");
+  assert.ok(
+    !(manifest.optional_host_permissions || []).includes(CDN),
+    "optional means requestable, and it cannot be requested from where this runs"
+  );
+
+  const worker = code(manifest.background.service_worker);
+  assert.match(worker, /permissions\.contains\(/, "the worker should CHECK the permission");
+  assert.ok(
+    !/permissions\.request\(/.test(worker),
+    "the worker must not request a permission it has no gesture to request with"
+  );
+
+  // A missing required permission is a broken install, so the export stops
+  // rather than uploading whichever files happened to survive.
+  const source = read("downloader.js");
+  const block = source.slice(source.indexOf("ENSURE_CDN_PERMISSION"));
+  assert.match(block.slice(0, 1200), /if \(ethyra\) \{\s*throw new Error\(/);
+});
+
+test("no student-facing message tells them to use a control that does not exist", () => {
+  // The 413 message told students to deselect a course — wording left over from
+  // a popup that briefly had a course picker. This export has none: every active
+  // enrolment goes, every time.
+  //
+  // A message suggesting something impossible is worse than a bare status code.
+  // It sends someone looking for a control that is not there and leaves them
+  // thinking they did it wrong.
+  const CONTROLS_THAT_DO_NOT_EXIST = [
+    /deselect/i,
+    /unselect/i,
+    /choose which course/i,
+    /select fewer/i,
+    /uncheck/i,
+    // Nothing is saved to disk, so there is no file to find, open or re-upload.
+    /your downloads folder/i,
+    /the downloaded (file|zip)/i,
+  ];
+
+  // Comments stripped: these files explain at length why the wording changed,
+  // and prose describing the mistake must not fail the check that documents it.
+  for (const file of ["ethyra/collect.js", "ethyra/upload.js", "ethyra/content.js", "ethyra/popup.js"]) {
+    const source = code(file);
+    for (const pattern of CONTROLS_THAT_DO_NOT_EXIST) {
+      assert.ok(!pattern.test(source), `${file} mentions ${pattern}, which this extension has no control for`);
+    }
+  }
+
+  // And the popup markup, which is where the copy a student reads first lives.
+  const popup = read(manifest.action.default_popup).replace(/<!--[\s\S]*?-->/g, "");
+  for (const pattern of CONTROLS_THAT_DO_NOT_EXIST) {
+    assert.ok(!pattern.test(popup), `the popup mentions ${pattern}`);
+  }
+});
+
+test("a release build carries no unanswered privacy placeholders", (t) => {
+  // PRIVACY.md holds `[TODO]`s for facts that are legal and business decisions —
+  // the retention period, the legal entity, the FERPA role, the contact address.
+  // They cannot be written from the code and must not be invented; a fabricated
+  // retention period is a checkable false statement, which is worse than a
+  // visibly unfinished one.
+  //
+  // But "resolve before release" written inside the document it governs is not a
+  // gate, it is a hope. A privacy policy is a hard Chrome Web Store requirement
+  // and the pressure at submission time is to ship.
+  //
+  // So the gate is the version. The store requires a bump on every submission,
+  // which makes it the one thing that cannot be forgotten on the way out, and
+  // leaving 0.x is the deliberate act of calling this releasable.
+  const privacy = readFileSync(join(ROOT, "PRIVACY.md"), "utf8");
+  const placeholders = privacy.match(/\[TODO/g) || [];
+
+  if (manifest.version.startsWith("0.")) {
+    t.diagnostic(`${placeholders.length} privacy placeholder(s) outstanding — blocking at version 1.0.0`);
+    return;
+  }
+
+  assert.equal(
+    placeholders.length,
+    0,
+    `PRIVACY.md still has ${placeholders.length} [TODO] placeholder(s) at version ${manifest.version}`
+  );
+});
+
+test("the disclosures do not claim to collect what the code refuses to ask for", () => {
+  // NOTICE said this extension transmits "grades and instructor comments" — true
+  // of the plan it was written from, and false of the code for as long as the
+  // code has existed. It contradicted PRIVACY.md, which a student reads, and it
+  // overstated collection in the one document a reviewer reaches for first.
+  //
+  // Only the AFFIRMATIVE half of each disclosure is checked. Both documents name
+  // grades and comments at length in order to say they are excluded, and a test
+  // that could not tell "we collect X" from "we do not collect X" would force
+  // the documents to stop being clear in order to stay green.
+  const NEVER_COLLECTED = [/\bgrades?\b/i, /instructor comments/i, /rubric marks/i, /class (averages|statistics)/i];
+
+  const notice = readFileSync(join(ROOT, "NOTICE"), "utf8");
+  const start = notice.indexOf("What is read:");
+  const end = notice.indexOf("What is not read");
+  assert.ok(start !== -1 && end > start, "NOTICE's student-data section moved or was restructured");
+  for (const pattern of NEVER_COLLECTED) {
+    assert.ok(!pattern.test(notice.slice(start, end)), `NOTICE lists ${pattern} as collected`);
+  }
+
+  // PRIVACY.md's equivalent: everything above its "What it does not read" heading.
+  const privacy = readFileSync(join(ROOT, "PRIVACY.md"), "utf8");
+  const cut = privacy.indexOf("## What it does not read");
+  assert.ok(cut !== -1, "PRIVACY.md's exclusion heading moved or was renamed");
+  for (const pattern of NEVER_COLLECTED) {
+    assert.ok(!pattern.test(privacy.slice(0, cut)), `PRIVACY.md lists ${pattern} as collected`);
+  }
 });
 
 test("nothing asks Canvas for marks", () => {

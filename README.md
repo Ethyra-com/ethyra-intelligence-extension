@@ -50,6 +50,7 @@ Full detail in [PRIVACY.md](PRIVACY.md).
 
 ```
 popup            sign in, press Export, watch progress
+  │                injects the bundle below into the tab, on open
   │
   ├─ background.js ──── holds the Ethyra session and the export's status
   │                     (the popup dies when it loses focus; the export does not)
@@ -63,7 +64,17 @@ popup            sign in, press Export, watch progress
        └─ upload.js      POST /api/act/uploads
 ```
 
-Three decisions worth knowing before changing anything:
+Four decisions worth knowing before changing anything:
+
+**The manifest declares no content scripts.** Upstream matches every HTTPS host,
+because self-hosted Canvas is on arbitrary school domains and `detector.js`
+decides at runtime. Inherited, that put this bundle in every page the student
+visits. Narrowing the pattern to `*.instructure.com` would have fixed it by
+dropping self-hosted Canvas, which the backend's `CANVAS_ORIGINS` setting exists
+to support — so the declaration is gone and the popup injects into one tab under
+`activeTab` instead. The ordered file list now lives in `ethyra/popup.js`, and
+`content.js` sets a flag so a second popup open cannot re-inject: these files
+declare top-level `const`s, and evaluating them twice is a `SyntaxError`.
 
 **One archive, not one per course.** An upload is a snapshot in a series on the
 Ethyra side — six separate uploads would read as six months of progress, start
@@ -122,8 +133,20 @@ No dependencies and no browser. Two suites:
       not, but the value proposition changes.
 - [ ] **Branding.** `icons/` is still upstream's artwork.
 - [ ] **Fill the `[TODO]` placeholders in PRIVACY.md** — retention, the legal
-      entity, and the FERPA posture. A privacy policy is a Chrome Web Store gate
-      and must not ship with placeholders in it.
+      entity, the FERPA posture, the Azure model-training position, and the
+      contact address. A privacy policy is a Chrome Web Store gate and must not
+      ship with placeholders in it. `wiring.test.mjs` fails the build if any
+      remain once `manifest.json` leaves `0.x`, so this cannot be forgotten at
+      submission time — but the facts are legal and business decisions and must
+      not be invented to clear the test.
+- [ ] **Two backend facts the policy depends on**, both verified against
+      `ethyra-intelligence-backend` on 2026-09-17 and neither fixable here:
+      there is **no retention or expiry mechanism of any kind** — no scheduled
+      purge, no blob lifecycle policy, nothing removed except by the delete
+      endpoint — and **deleting an upload does not remove the extracted text**,
+      which is stored keyed on content hash, shared across users by design, and
+      carries no user id. Both change what the policy has to say, and one may be
+      a bug rather than a disclosure.
 - [ ] **Backend must be deployed** with the `CANVAS_ORIGINS` and `X-Client`
       changes from the `chrome-extension` branch, or sign-in succeeds and the
       first token refresh fails.

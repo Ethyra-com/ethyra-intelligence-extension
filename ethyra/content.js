@@ -5,6 +5,18 @@
  * loaded — it injects the in-page download button and panel, which this fork
  * replaced with the popup.
  *
+ * ── Injected by the popup, not by the manifest ────────────────────────
+ *
+ * There is no `content_scripts` declaration; `ethyra/popup.js` injects this
+ * bundle into the active tab when the student opens the popup, and explains why
+ * there. The flag below is what stops it being injected twice: these files
+ * declare top-level `const`s, and a second evaluation in the same isolated world
+ * is a `SyntaxError` that would kill the listener the first one registered.
+ *
+ * It is set before the Canvas check, not inside it. A non-Canvas tab loads this
+ * bundle too — it just does nothing — and re-injecting there would throw the
+ * same way.
+ *
  * ── Why any of this happens in the page ───────────────────────────────
  *
  * Because that is where the Canvas session cookie is. A content script's
@@ -25,6 +37,8 @@
  * That is a real limitation of doing the work here and not one this fork can
  * engineer away.
  */
+
+window.__ethyraContentScriptLoaded = true;
 
 if (isCanvas()) {
   let exportInFlight = null;

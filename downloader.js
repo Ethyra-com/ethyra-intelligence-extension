@@ -410,23 +410,47 @@ async function downloadCourse(courseId, courseName, domain, onProgress, ethyra =
   };
 
   // Submission and discussion attachments are served from Canvas's
-  // user-content CDN, an *optional* host permission (see ENSURE_CDN_PERMISSION
-  // in background.js for why it can't be required). First download prompts
-  // once; every later call resolves silently. Denial is non-fatal — the
-  // affected files just fail and the user can grant access in Settings.
+  // user-content CDN. Upstream makes that an *optional* host permission and
+  // treats denial as non-fatal, because a course mirror missing a few
+  // attachments is still a course mirror.
+  //
+  // ── Ethyra fork: required, and fatal if absent ──────────────────────
+  //
+  // Those attachments ARE the export. A run that quietly drops them uploads an
+  // archive whose manifest never mentions the missing files — `pruneFailed`
+  // rewrites it to match what actually downloaded — so the backend receives a
+  // consistent, smaller, wrong picture of a student's work and nothing
+  // downstream can tell it apart from a student who submitted less.
+  //
+  // It is also a permission this mode could never obtain at runtime. MV3
+  // requires `chrome.permissions.request()` to run inside an active user
+  // gesture; a gesture survives exactly one synchronous message hop from a UI
+  // context, and this call arrives from a CONTENT SCRIPT several async hops into
+  // an export. There is no gesture left to spend. So the CDN origin moved to
+  // `host_permissions`, granted at install, and this became a check rather than
+  // a request.
   if (types.submissions || types.discussions) {
     try {
       const perm = await chrome.runtime.sendMessage({ type: "ENSURE_CDN_PERMISSION" });
       if (!perm?.granted) {
         const message =
           "Some submitted files may be skipped. Allow access to canvas-user-content.com to include them.";
-        // Ethyra fork: the only in-page UI call this mode can still reach.
-        // Routed to the recorder so the warning travels with the upload and
-        // `ui.js` is genuinely unnecessary rather than merely mostly unused.
-        if (ethyra) ethyra.warn(message);
-        else showToast(message, "info");
+        // A missing REQUIRED permission is a broken install, not a preference.
+        // Failing here costs the student a retry; continuing costs them a
+        // learning profile built from whichever files happened to survive.
+        if (ethyra) {
+          throw new Error(
+            "Ethyra cannot reach Canvas's file host, so your submitted files could not be " +
+              "downloaded. Remove and reinstall the extension, then try again."
+          );
+        }
+        showToast(message, "info");
       }
     } catch (err) {
+      // Ethyra fork: the throw above is a deliberate abort and must not be
+      // swallowed by the handler meant for a flaky message channel. Upstream's
+      // behaviour — log and carry on — is unchanged for its own path.
+      if (ethyra) throw err;
       console.warn("[Canvas Downloader] CDN permission check failed:", err);
     }
   }
@@ -543,11 +567,22 @@ async function downloadCourse(courseId, courseName, domain, onProgress, ethyra =
   /**
    * Files referenced from an HTML body, fetched and queued.
    *
-   * Ethyra fork: `dest` moves them out of the flat `Extracted_Files/` folder.
-   * Upstream files them by origin, which loses which assignment a handout was a
-   * handout FOR — and an assignment-level stage downstream cannot use a teacher's
-   * document it cannot trace back to an assignment. Passing the assignment's own
-   * folder keeps them together and lets them be labelled the teacher's.
+   * Ethyra fork: `dest` is `{ path, role }` and moves them out of the flat
+   * `Extracted_Files/` folder. Upstream files them by origin, which loses which
+   * assignment a handout was a handout FOR — and an assignment-level stage
+   * downstream cannot use a document it cannot trace back to an assignment.
+   *
+   * `role` is on `dest` rather than fixed, because an embedded file's owner
+   * depends on which body it was embedded in. A file linked from an assignment
+   * DESCRIPTION is the teacher's; a file the student embedded in their own
+   * rich-text SUBMISSION is theirs. Hard-coding the former quietly discarded the
+   * latter — `collectExport` keeps only files an assignment claims, and an
+   * unclaimed file was dropped without a word.
+   *
+   * Ordering matters and is in our favour: the assignments loop runs before the
+   * submissions loop, so `seenFileIds` gives an instruction attachment the claim
+   * on any file that appears in both. Teacher's wins, which is the safe way for
+   * that tie to break.
    */
   async function extractLinkedFiles(html, source, dest = null) {
     const doc = new DOMParser().parseFromString(html, "text/html");
@@ -615,10 +650,12 @@ async function downloadCourse(courseId, courseName, domain, onProgress, ethyra =
             updatedAt: data.updated_at || data.modified_at || "",
             canvasId: fileId,
             ...(sourceCourseId ? { sourceCourseId } : {}),
-            // The teacher wrote this, not the student. Without the label the
-            // backend guesses from the filename, and a handout read as a
+            // Whose body this was embedded in decides whose file it is. The
+            // default is the teacher's, because the description is the only
+            // caller that omits a role — and without a label the backend
+            // guesses from the filename, which is how a handout read as a
             // submission yields a proficiency level for prose nobody here wrote.
-            ...(dest ? { role: ROLE_INSTRUCTION } : {}),
+            ...(dest ? { role: dest.role || ROLE_INSTRUCTION } : {}),
           });
         }
       } catch (err) {
@@ -778,7 +815,15 @@ async function downloadCourse(courseId, courseName, domain, onProgress, ethyra =
       }
       if (h.body) {
         body += `<div>${cleanCanvasHtml(h.body)}</div>`;
-        if (types.linkedFiles) await extractLinkedFiles(h.body, `Submission: ${a.name} — ${studentName}`);
+        if (types.linkedFiles) {
+          // Ethyra fork: a file the student embedded in their own rich-text
+          // submission is THEIR work, and belongs in this assignment's folder
+          // labelled as such. Left to the default it landed in
+          // `Extracted_Files/` with no role, which no assignment claims — so it
+          // was fetched, packaged, and then dropped from the archive without a
+          // word. An image pasted into an essay simply went missing.
+          await extractLinkedFiles(h.body, `Submission: ${a.name} — ${studentName}`, ethyra ? { path: folder, role: ROLE_SUBMISSION } : null);
+        }
       }
       if (h.url) body += `<p><strong>Submitted URL:</strong> <a href="${escapeHtml(h.url)}">${escapeHtml(h.url)}</a></p>`;
       const names = (h.attachments || []).map((att) => att.display_name || att.filename).filter(Boolean);

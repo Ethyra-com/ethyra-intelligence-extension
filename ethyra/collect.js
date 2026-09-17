@@ -26,9 +26,52 @@
  * archive — which the backend reports as files it cannot find, and drops.
  */
 
+// ── Folder names carry the Canvas id, and must ───────────────────────────────
+//
+// A folder is an IDENTITY here, not a label. It keys the recorder's map of
+// assignments and it is what `collectExport` matches files against, so two
+// things sharing one folder become one thing.
+//
+// Names collide three ways, all of them real:
+//
+//   exact       one course can hold two assignments called "Weekly Reflection"
+//   sanitised   "Essay: Part 1" and "Essay- Part 1" both become "Essay- Part 1"
+//   truncated   two paper titles sharing their first 80 characters — the
+//               likeliest of the three, because long assignment names are
+//               common and their distinguishing word tends to be at the end
+//
+// The damage is quiet. The recorder's map keeps whichever assignment was
+// recorded last, while `downloadCourse` has already queued BOTH assignments'
+// files under that one folder — so the survivor claims all of them and the work
+// gets measured against the wrong handout. The resulting manifest passes
+// `validateManifest` cleanly: every file exists, every file is claimed, there is
+// submitted work. Nothing downstream can tell it apart from a correct export.
+//
+// The id goes AFTER truncation, or the thing making the name unique is the
+// first thing cut off.
+
+/** A course's folder: sanitised name, then its Canvas id. One path component. */
+function courseFolderFor(course) {
+  return `${sanitizeFilename(course.name).substring(0, 100)}-${canvasId(course.id)}`;
+}
+
 /** Trailing slash, because upstream composes paths as `path + filename`. */
 function assignmentFolderFor(courseFolder, assignment) {
-  return `${courseFolder}/${sanitizeFilename(assignment.name).substring(0, 80)}/`;
+  return `${courseFolder}/${sanitizeFilename(assignment.name).substring(0, 80)}-${canvasId(assignment.id)}/`;
+}
+
+/**
+ * A Canvas id, safe to put in a path.
+ *
+ * Canvas sends these as numbers, or as strings under the
+ * `application/json+canvas-string-ids` Accept header this extension uses. The
+ * filter is belt and braces — an id is the one part of the folder that has to
+ * survive intact, so it is not left to `sanitizeFilename`, which would silently
+ * turn an unexpected character into a dash and reintroduce the collision.
+ */
+function canvasId(value) {
+  const cleaned = String(value ?? "").replace(/[^\w-]/g, "");
+  return cleaned || "unknown";
 }
 
 /**
@@ -38,7 +81,7 @@ function assignmentFolderFor(courseFolder, assignment) {
  * collection pass could get wrong later.
  */
 function createRecorder(course) {
-  const courseFolder = sanitizeFilename(course.name).substring(0, 100);
+  const courseFolder = courseFolderFor(course);
   const assignments = new Map(); // folder → { assignment, submission }
   const warnings = [];
 
@@ -155,12 +198,30 @@ async function collectExport({ origin, extensionVersion, onProgress = () => {} }
       continue;
     }
 
-    // Only the files that ended up in a recorded assignment. Upstream can emit
-    // root-level extras; anything not claimed here would reach the backend as a
-    // stray and be dropped, so it is dropped knowingly instead.
+    // ── Only the files an assignment claimed, and say what was not ────
+    //
+    // Upstream emits root-level extras that no assignment owns, and anything
+    // unclaimed would reach the backend as a stray and be dropped there anyway.
+    //
+    // This used to drop them in silence, and the comment called that "dropped
+    // knowingly" — which was true of the author and nobody else. It hid a real
+    // bug: files embedded in a student's rich-text submission were queued into
+    // `Extracted_Files/` with no role, claimed by nothing, and vanished. An
+    // image pasted into an essay was fetched, packaged and discarded without a
+    // trace. The warning is what would have made that visible on the first run.
     const claimed = new Set(manifestAssignments.flatMap((a) => a.files.map((f) => f.path)));
+    const unclaimed = [];
     for (const f of courseFiles) {
-      if (claimed.has(`${f.path}${f.filename}`)) files.push(f);
+      const path = `${f.path}${f.filename}`;
+      if (claimed.has(path)) files.push(f);
+      else unclaimed.push(path);
+    }
+    if (unclaimed.length) {
+      console.warn(`[Ethyra] ${course.name}: not uploading ${unclaimed.length} unclaimed file(s)`, unclaimed);
+      warnings.push(
+        `${unclaimed.length} file(s) in ${course.name} were not attached to an assignment and were left out: ` +
+          unclaimed.slice(0, 5).join(", ")
+      );
     }
 
     manifestCourses.push(
@@ -192,11 +253,21 @@ async function collectExport({ origin, extensionVersion, onProgress = () => {} }
 
   // The whole-archive cap does NOT trim. Silently dropping work to fit would
   // produce a learning graph missing assignments nobody was told about, and
-  // "deselect a course" is a decision for the person whose coursework it is.
+  // choosing what to leave out is not a decision this code gets to make.
+  //
+  // The message says the size and stops there, on purpose. This export has no
+  // course picker — every active enrolment goes, every time — so there is
+  // nothing a student can do about the total. Telling them to try again, or to
+  // remove something, would be an instruction they cannot follow, which is
+  // worse than admitting the limit is ours to raise.
   const totalBytes = files.reduce((sum, f) => sum + (f.size || 0), 0);
   if (totalBytes > ETHYRA_MAX_TOTAL_BYTES) {
     const mb = Math.round(totalBytes / (1024 * 1024));
-    throw new Error(`This export is about ${mb} MB, over the 500 MB limit. Deselect a course and try again.`);
+    const limit = Math.round(ETHYRA_MAX_TOTAL_BYTES / (1024 * 1024));
+    throw new Error(
+      `Your coursework comes to about ${mb} MB, over Ethyra's ${limit} MB limit, so nothing was uploaded. ` +
+        "This is a limit on our side rather than anything you can change — please let Ethyra know."
+    );
   }
 
   return { manifest, files, warnings, totalBytes };

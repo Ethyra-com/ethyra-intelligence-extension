@@ -101,13 +101,27 @@ function uploadArchive({ apiUrl, accessToken, blob, studentName, signal, onProgr
   });
 }
 
-/** A sentence a student can act on, for the statuses the backend actually returns. */
+/**
+ * What went wrong, for the statuses the backend actually returns.
+ *
+ * Each one either names an action the student can take or says plainly that
+ * there isn't one. A message that suggests something impossible is worse than a
+ * bare status code: it sends someone looking for a control that does not exist
+ * and leaves them thinking they did it wrong.
+ *
+ * The 413 case is the one that got this wrong — it told students to deselect a
+ * course, wording left over from a popup that briefly had a course picker. This
+ * export has none: every active enrolment goes, every time.
+ */
 function describeFailure(status) {
   switch (status) {
     case 401:
       return "Your Ethyra session has expired. Sign in again and retry.";
     case 413:
-      return "That export is larger than Ethyra's 500 MB limit. Deselect a course and try again.";
+      return (
+        "Your coursework is over Ethyra's 500 MB limit, so it was not accepted. " +
+        "This is a limit on our side rather than anything you can change — please let Ethyra know."
+      );
     case 429:
       return "Too many uploads in a short time. Wait a minute and try again.";
     case 503:
