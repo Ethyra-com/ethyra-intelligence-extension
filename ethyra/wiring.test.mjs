@@ -90,6 +90,12 @@ function guardsAround(lines, index) {
     found.push(line);
     if (/^\s*\}\s*else\s*\{/.test(line)) {
       for (let k = j - 1; k >= 0; k--) {
+        // A blank line is not a dedent. `indentOf("")` is 0, so without this the
+        // scan stops at the first empty line inside the `if` branch and never
+        // reaches the `if` that owns this `else` — reporting a correctly guarded
+        // site as unguarded. `code()` blanks every comment line to "", so one
+        // comment in that branch was enough to trigger it.
+        if (!lines[k].trim()) continue;
         if (indentOf(lines[k]) < ind) break;
         if (indentOf(lines[k]) === ind && /^\s*(\}\s*else\s+)?if \(/.test(lines[k])) {
           found.push(`else-of:${lines[k]}`);
@@ -127,6 +133,56 @@ const REQUIRED = [
   ["buildArchive", "ethyra/archive.js", "ethyra/content.js"],
   ["uploadArchive", "ethyra/upload.js", "ethyra/content.js"],
 ];
+
+test("guardsAround reports the conditions that enclose a line, and only those", () => {
+  // This helper decides whether two of the tests below pass. It had no coverage
+  // of its own, which is how the thing it replaced — a 40-line proximity window —
+  // went on quietly accepting a comment as a guard.
+  const at = (...src) => {
+    const lines = src.join("\n").split("\n");
+    return [lines, lines.findIndex((l) => l.includes("TARGET"))];
+  };
+  const guards = (...src) => guardsAround(...at(...src));
+
+  // A blank line is not a dedent. `code()` blanks every comment to "", so a
+  // single comment inside the taken branch used to hide the `if` owning the
+  // `else` — reporting a correctly guarded site as unguarded.
+  const acrossBlank = guards(
+    "  if (ethyra) {",
+    "    warn();",
+    "",
+    "    more();",
+    "  } else {",
+    "    TARGET",
+    "  }"
+  );
+  assert.ok(
+    acrossBlank.some((g) => g.startsWith("else-of:") && /if \(ethyra\)/.test(g)),
+    `the else branch of an if (ethyra) is a guard: ${acrossBlank.join(" | ")}`
+  );
+
+  // Scope, not proximity: a sibling block that happens to sit nearby guards
+  // nothing. This is the property the proximity window did not have.
+  const sibling = guards(
+    "  if (!ethyra) {",
+    "    unrelated();",
+    "  }",
+    "  if (types.grades) {",
+    "    TARGET",
+    "  }"
+  );
+  assert.ok(!sibling.some((g) => /!ethyra/.test(g)), `a sibling block is not a guard: ${sibling.join(" | ")}`);
+  assert.ok(sibling.some((g) => /types\.grades/.test(g)), sibling.join(" | "));
+
+  // Nesting reports every enclosing level, so an outer guard still counts and an
+  // inner block does not need its own.
+  const nested = guards("  if (!ethyra) {", "    for (const f of files) {", "      TARGET", "    }", "  }");
+  assert.ok(nested.some((g) => /!ethyra/.test(g)), nested.join(" | "));
+
+  // An unguarded site reports nothing rather than reaching for whatever precedes it.
+  const bare = guards("  if (ethyra) {", "    warn();", "  }", "  TARGET");
+  assert.equal(bare.length, 0, `nothing encloses it: ${bare.join(" | ")}`);
+});
 
 test("every file the manifest lists exists", () => {
   for (const rel of scripts) {
@@ -426,8 +482,34 @@ test("HTML the student wrote is link-rewritten, and nothing is added to it", () 
     );
   }
 
+  // The pass itself, bounded by its own last statement rather than a character
+  // count: a fixed window silently shrinks every time someone explains one of
+  // these branches, and then stops covering the line it was written to check.
+  const passEnd = source.indexOf("delete f.resourceId", rewriteStart);
+  assert.ok(passEnd > rewriteStart, "the rewrite loop's tail moved or was renamed");
+  const pass = source.slice(rewriteStart, passEnd);
+
+  // MEASURED: both of Ethyra's caps read `f.size`, and a document generated in
+  // the browser has none unless something computes it. This is the only
+  // generated document Ethyra mode emits, so it was the only entry reaching
+  // `collect.js` sizeless — where a missing size reads as zero and passes the
+  // 50 MB per-file cap and contributes nothing to the 500 MB total. See
+  // `sizes.test.mjs` for what the consumer actually does with that.
+  //
+  // It has to measure the SAME string that becomes the archive entry. Measuring
+  // `rewritten` would count pre-sanitised bytes; measuring the data-URI would
+  // count percent-encoding that is never stored. So the identifier is captured
+  // from the URI construction and required again in the size assignment.
+  const encoded = pass.match(/encodeURIComponent\((\w+)\)/);
+  assert.ok(encoded, "the bare data-URI construction moved or was renamed");
+  const body = encoded[1];
+  assert.match(
+    pass,
+    new RegExp(`f\\.size = new TextEncoder\\(\\)\\.encode\\(${body}\\)\\.byteLength`),
+    `the bare branch must record the byte length of ${body}, the string it stores`
+  );
+
   // And the bare branch must not route through the wrapper.
-  const pass = source.slice(rewriteStart, rewriteStart + 1400);
   assert.match(pass, /f\.bareHtml\s*\n?\s*\?/, "the pass must branch on bareHtml");
   const bare = pass.match(/f\.bareHtml[\s\S]*?:\s*isMarkdown/);
   assert.ok(bare && !/toHtmlDataUri/.test(bare[0]), "the bare branch must not wrap the student's document");

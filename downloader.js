@@ -1786,11 +1786,31 @@ async function downloadCourse(courseId, courseName, domain, onProgress, ethyra =
     // stylesheet this archive no longer carries. Sanitised on the way out for
     // the same reason upstream sanitises: it strips scripts, `on*` handlers and
     // `javascript:` URLs, and touches no prose.
+    const bareBody = f.bareHtml ? sanitizeHtml(rewritten) : null;
     f.url = f.bareHtml
-      ? `data:text/html;charset=utf-8,${encodeURIComponent(sanitizeHtml(rewritten))}`
+      ? `data:text/html;charset=utf-8,${encodeURIComponent(bareBody)}`
       : isMarkdown
         ? toMarkdownDataUri(f.title, htmlToMarkdown(rewritten))
         : toHtmlDataUri(f.title, rewritten, f.path);
+    if (bareBody !== null) {
+      // Ethyra fork: both of Ethyra's caps read `f.size`, and a Canvas file
+      // entry gets one from the API while a generated document has none. This is
+      // the only generated document Ethyra mode emits, so it was the only entry
+      // reaching `collect.js` with no size — where `oversized()` reads a missing
+      // size as 0 and the 500 MB total adds 0 for it. Both caps passed it, and
+      // `buildArchive` then produced the real bytes, far too late for either
+      // check: a student would wait out the whole export to be told 413.
+      //
+      // Not hypothetical for a rich-text submission. Canvas keeps pasted images
+      // inline as base64 data URIs in the body, so screenshots in a text-entry
+      // answer are megabytes of HTML that the archive counts and this did not.
+      //
+      // Uncompressed UTF-8 length, which is what the archive entry holds and
+      // what the backend's per-artifact limit measures. Upstream's generated
+      // documents are deliberately left alone: they feed a different ceiling on
+      // a path this fork does not take.
+      f.size = new TextEncoder().encode(bareBody).byteLength;
+    }
     delete f.rawBody;
     delete f.bareHtml;
     delete f.title;
