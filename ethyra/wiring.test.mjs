@@ -42,16 +42,64 @@ const scripts = (() => {
 })();
 
 /**
- * Source with comments removed.
+ * Source with comment CONTENT removed and its line numbering intact.
  *
- * For assertions of the form "this file must not CALL x". These files explain
- * their reasoning at length, and prose that names the very API it is explaining
- * why not to call would otherwise fail the check it exists to document.
+ * For assertions of the form "this file must not do x". These files explain
+ * their reasoning at length, and prose naming the very thing it is explaining
+ * why not to do would otherwise satisfy — or fail — the check it documents.
+ *
+ * Two details that were both wrong here before:
+ *
+ * Block comments are blanked rather than deleted, so a line number in an
+ * assertion message still points at the line a reader will find.
+ *
+ * And the leading-whitespace class is `[^\S\n]`, not `\s`. Under `m`, `\s`
+ * matches a newline, so anchoring a line-comment pattern with `\s` swallowed
+ * every blank line preceding a comment — 61 lines of `downloader.js`, silently.
+ * That is what made the offsets in these tests unusable, and hid a guard check
+ * that was passing on prose.
  */
 const code = (rel) =>
   read(rel)
-    .replace(/\/\*[\s\S]*?\*\//g, "")
-    .replace(/^\s*\/\/.*$/gm, "");
+    .replace(/\/\*[\s\S]*?\*\//g, (m) => m.replace(/[^\n]/g, " "))
+    .replace(/^[^\S\n]*\/\/.*$/gm, "");
+
+/** Indentation width, for walking out of a block to the guards enclosing it. */
+const indentOf = (line) => line.match(/^[ \t]*/)[0].length;
+
+/**
+ * The conditions enclosing `index`, outermost last.
+ *
+ * A 40-line window was the previous approximation and it was not sound: it
+ * accepted an `!ethyra` appearing anywhere nearby, including in a comment
+ * explaining a different guard. `manifest.json` passed on exactly that and
+ * failed the moment comments were stripped.
+ *
+ * An `} else {` is returned together with the `if` it belongs to, prefixed
+ * `else-of:`, because "the branch Ethyra mode does not take" is a guard.
+ */
+function guardsAround(lines, index) {
+  const found = [];
+  let depth = indentOf(lines[index]);
+  for (let j = index - 1; j >= 0 && depth > 0; j--) {
+    const line = lines[j];
+    if (!line.trim() || !line.trimEnd().endsWith("{")) continue;
+    const ind = indentOf(line);
+    if (ind >= depth) continue;
+    depth = ind;
+    found.push(line);
+    if (/^\s*\}\s*else\s*\{/.test(line)) {
+      for (let k = j - 1; k >= 0; k--) {
+        if (indentOf(lines[k]) < ind) break;
+        if (indentOf(lines[k]) === ind && /^\s*(\}\s*else\s+)?if \(/.test(lines[k])) {
+          found.push(`else-of:${lines[k]}`);
+          break;
+        }
+      }
+    }
+  }
+  return found;
+}
 
 /** Files that must provide each symbol, and the file that consumes it. */
 const REQUIRED = [
@@ -247,11 +295,13 @@ test("Ethyra mode queues nothing at the archive root", () => {
   // So this checks the class, not the line: every root-level push must be
   // unreachable in Ethyra mode, whether by an explicit guard or by a content
   // type `ethyra/profile.js` turns off.
-  const source = read("downloader.js");
-  const lines = source.split("\n");
+  // Comments stripped: this file argues about Ethyra mode at length, and a
+  // guard check satisfied by prose is not a guard check. `manifest.json` was
+  // passing on a comment, which is the failure this rewrite exists for.
+  const lines = code("downloader.js").split("\n");
 
   const disabled = new Set(
-    [...read("ethyra/profile.js").matchAll(/^\s*(\w+):\s*false\b/gm)].map((m) => m[1])
+    [...code("ethyra/profile.js").matchAll(/^\s*(\w+):\s*false\b/gm)].map((m) => m[1])
   );
   assert.ok(disabled.size > 0, "ETHYRA_CONTENT_TYPES no longer switches anything off");
 
@@ -262,17 +312,27 @@ test("Ethyra mode queues nothing at the archive root", () => {
     // uses the same shape and never reaches the archive.
     const open = lines.slice(Math.max(0, i - 12), i).join("\n");
     if (!open.includes("filesToDownload.push({")) return;
-    roots.push({ line: i + 1, context: lines.slice(Math.max(0, i - 40), i).join("\n") });
+    const name = (lines.slice(Math.max(0, i - 12), i).find((l) => l.includes("filename:")) || "").trim();
+    roots.push({ line: i + 1, name, guards: guardsAround(lines, i) });
   });
 
   assert.ok(roots.length >= 4, `expected upstream's root-level writers to still be present, found ${roots.length}`);
 
-  for (const { line, context } of roots) {
-    const guarded =
-      /!ethyra\b/.test(context) ||
-      /if \(ethyra\)[\s\S]*\} else \{/.test(context) ||
-      [...disabled].some((type) => new RegExp(`types\\.${type}\\b`).test(context));
-    assert.ok(guarded, `downloader.js:${line} queues a root-level file reachable in Ethyra mode`);
+  for (const { line, name, guards } of roots) {
+    // Scope, and polarity. Each has to be a condition that EXCLUDES Ethyra mode:
+    // a negative guard, the else of an `if (ethyra)`, or a content type the
+    // profile turns off.
+    const excluded = guards.some(
+      (g) =>
+        /!ethyra\b/.test(g) ||
+        (g.startsWith("else-of:") && /\bif \(ethyra\)/.test(g)) ||
+        [...disabled].some((type) => new RegExp(`types\\.${type}\\b`).test(g))
+    );
+    assert.ok(
+      excluded,
+      `downloader.js:${line} queues a root-level file reachable in Ethyra mode (${name})\n` +
+        `    enclosing guards: ${guards.length ? guards.map((g) => g.trim()).join(" | ") : "none"}`
+    );
   }
 });
 
@@ -309,13 +369,176 @@ test("no message reachable in Ethyra mode names a file this archive does not con
         if (!line.includes(file)) continue;
         // The queue site itself is the declaration, not a claim about the archive.
         if (new RegExp(`filename: "${file.replace(".", "\\.")}"`).test(line)) continue;
-        assert.match(
-          line,
-          /ethyra/,
-          `downloader.js:${i + 1} names ${file} in text Ethyra mode can reach:\n    ${line.trim()}`
+
+        // Merely mentioning `ethyra` on the line is not enough — that accepts
+        // `ethyra ? " — listed in …" : ""`, which names the file in precisely
+        // the branch Ethyra mode takes. So read the ternary and check the side
+        // Ethyra mode actually selects.
+        const ternary = line.match(/(!?)\s*ethyra\s*\?([^:]*):(.*)$/);
+        assert.ok(
+          ternary,
+          `downloader.js:${i + 1} names ${file} outside an explicit ethyra ternary:\n    ${line.trim()}`
+        );
+        const [, negated, whenTrue, whenFalse] = ternary;
+        const ethyraBranch = negated ? whenFalse : whenTrue;
+        assert.ok(
+          !ethyraBranch.includes(file),
+          `downloader.js:${i + 1} names ${file} in the branch Ethyra mode takes:\n    ${line.trim()}`
         );
       }
     });
+});
+
+test("HTML the student wrote is link-rewritten, and nothing is added to it", () => {
+  // Two requirements that pull against each other, which is why this is one test.
+  //
+  // REWRITTEN: a file the student embedded in their own prose is harvested into
+  // the same folder, and `urlMap` maps its Canvas URL to that local copy — but
+  // only entries carrying `rawBody` reach the rewrite pass that consults it.
+  // Building a finished data-URI at push time skips it, so the archive held the
+  // image while the HTML still pointed at Canvas: a verifier-bound, expiring URL
+  // persisted into Ethyra's storage, and a local copy nothing referenced.
+  //
+  // UNCHANGED: the obvious fix is upstream's `buildDocEntry`, which ends in
+  // `toHtmlDataUri` and puts `<h1>${title}</h1>` at the top of the document.
+  // This file exists so the backend quotes from something the student wrote.
+  // A heading naming the attempt is text they did not write, inserted into the
+  // document the proficiency stage quotes character-for-character and segments
+  // into the `<p n="N">` markers the whole evidence contract rests on.
+  const source = read("downloader.js");
+
+  // Bounded rather than `[^}]*`: the block interpolates `${h.attempt || 1}`, so
+  // a brace-free match stops short of the fields being asserted on.
+  const push = source.match(/filesToDownload\.push\(\{[\s\S]{0,500}?submission_text_[\s\S]{0,300}?\}\);/);
+  assert.ok(push, "the inline-submission push moved or was renamed");
+  assert.match(push[0], /rawBody:/, "it must carry rawBody, or the rewrite pass never sees it");
+  assert.match(push[0], /bareHtml:/, "it must opt out of the document wrapper");
+  assert.match(push[0], /role: ROLE_SUBMISSION/);
+
+  // The general form: any finished HTML data-URI built at push time has bypassed
+  // the rewrite. The pass itself is the one legitimate place to build one.
+  const rewriteStart = source.indexOf("--- Rewrite + encode pass");
+  assert.ok(rewriteStart !== -1, "the rewrite pass moved or was renamed");
+  for (const m of source.matchAll(/data:text\/html/g)) {
+    assert.ok(
+      m.index > rewriteStart,
+      `downloader.js builds an HTML data-URI at offset ${m.index}, before the rewrite pass that repoints its links`
+    );
+  }
+
+  // And the bare branch must not route through the wrapper.
+  const pass = source.slice(rewriteStart, rewriteStart + 1400);
+  assert.match(pass, /f\.bareHtml\s*\n?\s*\?/, "the pass must branch on bareHtml");
+  const bare = pass.match(/f\.bareHtml[\s\S]*?:\s*isMarkdown/);
+  assert.ok(bare && !/toHtmlDataUri/.test(bare[0]), "the bare branch must not wrap the student's document");
+});
+
+test("a course the user teaches is rejected before anything is fetched from it", () => {
+  // `fetchCourseRole` is true for teacher, TA and designer, and every teacher
+  // branch below it reads other people's work. Worse, `renderSubmission` is
+  // shared between the teacher and student paths and records into the Ethyra
+  // recorder regardless of which one called it.
+  //
+  // Nothing reached the archive before this guard, but only by accident: the
+  // teacher path files land under `Submissions/<assignment>/<student>/` and
+  // `collect.js` claims only files in the assignment's own folder, so they were
+  // dropped. A refactor aligning those two folder schemes — the kind that looks
+  // like tidying — would have started uploading other students' work under a
+  // teacher's account with nothing failing.
+  //
+  // Position is the whole point. A filter after collection still pulls every
+  // student's submissions, comment threads and rubric marks into the tab, which
+  // has happened whether or not anything is uploaded afterwards, and which
+  // PRIVACY.md tells students does not happen. So this asserts ORDER, not
+  // presence.
+  const source = read("downloader.js");
+
+  const roleAt = source.indexOf("const isTeacher = await fetchCourseRole");
+  assert.ok(roleAt !== -1, "the role resolution moved or was renamed");
+
+  const guard = source.slice(roleAt).match(/if \(ethyra && isTeacher\) \{[\s\S]{0,600}?\}/);
+  assert.ok(guard, "Ethyra mode must reject a teaching role at the point it is resolved");
+  assert.match(guard[0], /throw /, "it must abort the course, not merely warn");
+  assert.match(guard[0], /ETHYRA_NOT_A_STUDENT/, "carry a code, so a skip is distinguishable from a failure");
+
+  const guardEnd = roleAt + guard.index + guard[0].length;
+
+  // Nothing may be fetched between the role resolving and the guard. Measured
+  // from the end of that statement, since resolving the role is itself an await.
+  const between = source.slice(source.indexOf("\n", roleAt), roleAt + guard.index);
+  assert.ok(!/await |fetchAllPages\(|fetchWithRetry\(/.test(between), "a fetch slipped in before the guard");
+
+  // Every teacher-only fetch must sit after it.
+  for (const m of source.matchAll(/if \(isTeacher/g)) {
+    assert.ok(m.index > guardEnd, `a teacher branch at offset ${m.index} precedes the guard`);
+  }
+  // The one endpoint that returns other students' submissions, specifically.
+  const roster = source.indexOf("assignments/${a.id}/submissions?per_page=100");
+  assert.ok(roster > guardEnd, "the all-students submissions fetch must be unreachable in Ethyra mode");
+
+  // And the skip must read as a skip.
+  const collect = read("ethyra/collect.js");
+  assert.match(collect, /ETHYRA_NOT_A_STUDENT/, "collect.js must recognise the code");
+  const branch = collect.match(/ETHYRA_NOT_A_STUDENT\)[\s\S]{0,400}?continue;/);
+  assert.ok(branch, "the skip branch moved or was renamed");
+  assert.ok(
+    !/could not be collected/.test(branch[0]),
+    "a deliberate skip must not be reported as a failure — that is what makes someone retry"
+  );
+});
+
+test("no upstream setting can quietly shrink an Ethyra export", () => {
+  // `settings` comes from `chrome.storage.sync` with upstream's defaults. This
+  // fork has no options page and a popup with no settings, so in practice they
+  // are always the defaults — which is why none of these had visibly misfired.
+  //
+  // "Unreachable" is a property of the current UI, not of the code. Upstream's
+  // options page is still in the tree, `git merge upstream/main` is a supported
+  // operation here, and `chrome.storage.sync` is writable from a console. Each
+  // of these settings drops student work and says so only in a log line:
+  //
+  //   incrementalMode   omits unchanged files — and the backend dedupes by
+  //                     content hash already, so a file missing from the archive
+  //                     is not "unchanged" to it, it is a file the student no
+  //                     longer has. The profile rewinds.
+  //   maxFileSizeMB     drops a submission over an arbitrary size
+  //   excludeVideos     drops a media-recording submission, which is work
+  //
+  // Each would produce a smaller archive with a manifest that agrees with it.
+  const source = read("downloader.js");
+  const ethyraReturn = source.indexOf("if (ethyra) return filesToDownload");
+  assert.ok(ethyraReturn !== -1, "the Ethyra hand-back moved or was renamed");
+
+  const lines = source.slice(0, ethyraReturn).split("\n");
+  const indent = (s) => s.match(/^\s*/)[0].length;
+
+  lines.forEach((line, i) => {
+    if (!/^\s*if \(.*\bsettings\./.test(line)) return;
+    if (/!ethyra/.test(line)) return;
+
+    // A nested read is fine when some enclosing block already excluded Ethyra
+    // mode — guarding both would be noise, and noise is what stops being read.
+    // Walk out through the ancestors by indentation.
+    let depth = indent(line);
+    for (let j = i - 1; j >= 0 && depth > 0; j--) {
+      if (!lines[j].trim() || !lines[j].trimEnd().endsWith("{")) continue;
+      if (indent(lines[j]) >= depth) continue;
+      depth = indent(lines[j]);
+      if (/!ethyra/.test(lines[j])) return;
+    }
+
+    assert.fail(`downloader.js:${i + 1} branches on a setting Ethyra mode can reach:\n    ${line.trim()}`);
+  });
+
+  // The inventory write is the one that was actually running: it sits outside
+  // the `incrementalMode` check, so every export recorded files it never
+  // downloaded locally.
+  const write = source.indexOf("chrome.storage.local.set({ [incrementalKey]");
+  assert.ok(write !== -1, "the incremental inventory write moved or was renamed");
+  assert.ok(
+    /if \(!ethyra\) \{/.test(source.slice(Math.max(0, write - 700), write)),
+    "the incremental inventory write must be skipped in Ethyra mode"
+  );
 });
 
 test("files no assignment claims are reported, not silently dropped", () => {

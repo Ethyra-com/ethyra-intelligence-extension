@@ -153,6 +153,14 @@ async function collectExport({ origin, extensionVersion, onProgress = () => {} }
         recorder
       );
     } catch (err) {
+      // A course the student teaches or assists in is skipped on purpose, and
+      // saying "could not be collected" about a deliberate choice is the kind of
+      // wrong that makes someone retry, or write in about a bug that is not one.
+      if (err?.code === ETHYRA_NOT_A_STUDENT) {
+        console.info(`[Ethyra] Skipping ${course.name}: not a student enrolment.`);
+        warnings.push(`${course.name} was skipped — ${err.message}`);
+        continue;
+      }
       // One course failing must not lose the other five. The student is told
       // which one, rather than being handed a shorter export with no
       // explanation.

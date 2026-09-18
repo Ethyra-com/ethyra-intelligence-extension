@@ -469,6 +469,31 @@ async function downloadCourse(courseId, courseName, domain, onProgress, ethyra =
   const isTeacher = await fetchCourseRole(domain, courseId);
   log(isTeacher ? "Teacher role detected — archiving student data" : "Student role — archiving own view");
 
+  // Ethyra fork: stop here, before a single submission is fetched.
+  //
+  // `fetchCourseRole` is true for teacher, TA and designer. Every branch below
+  // that opts into the richer teacher fetches reads other people's work — and
+  // `renderSubmission` is shared with the student path, so it records into the
+  // Ethyra recorder no matter which caller reached it.
+  //
+  // This is deliberately the earliest possible point rather than a filter later
+  // on. A check after collection would still have pulled every student's
+  // submissions, comment threads and rubric marks into this tab, which is a
+  // thing that happened whether or not anything was uploaded afterwards, and
+  // which PRIVACY.md tells students does not happen.
+  //
+  // One course, not the export: a student who TAs a lab still has their own five
+  // courses collected. `collect.js` turns this into a skip with a reason.
+  if (ethyra && isTeacher) {
+    throw Object.assign(
+      new Error(
+        "You teach or assist in this course, so Ethyra skipped it. Ethyra measures your own coursework, " +
+          "and reading a course you teach would mean reading other students' work."
+      ),
+      { code: ETHYRA_NOT_A_STUDENT }
+    );
+  }
+
   // Counts surfaced in the export manifest.
   let discussionReplyCount = 0;
   let studentSubmissionCount = 0;
@@ -868,10 +893,26 @@ async function downloadCourse(courseId, courseName, domain, onProgress, ethyra =
       // The summary page itself is not emitted: everything on it travels as
       // data in the manifest, and a rendered copy would be an archive entry no
       // assignment claims.
+      // `rawBody` rather than a finished data-URI, so the deferred rewrite pass
+      // at the end of this function repoints links at the local copies. A file
+      // the student embedded in their own prose is harvested into this same
+      // folder, and without the rewrite the archive held the image while the
+      // HTML still pointed at Canvas — leaving a verifier-bound, time-limited
+      // Canvas URL sitting in Ethyra's storage for as long as the upload lives,
+      // and the local copy referenced by nothing.
+      //
+      // `bareHtml` is why this is not simply upstream's `buildDocEntry`. That
+      // path ends in `toHtmlDataUri`, which wraps the body in a document and
+      // puts `<h1>${title}</h1>` at the top of it. This file exists precisely so
+      // the backend quotes from something the student wrote; a heading naming
+      // the attempt is text they did not write, inserted into the document the
+      // proficiency stage quotes character-for-character and segments into the
+      // `<p n="N">` markers the evidence contract is built on.
       for (const h of attempts) {
         if (!h.body) continue;
         filesToDownload.push({
-          url: `data:text/html;charset=utf-8,${encodeURIComponent(h.body)}`,
+          rawBody: h.body,
+          bareHtml: true,
           filename: `submission_text_${h.attempt || 1}.html`,
           path: folder,
           role: ROLE_SUBMISSION,
@@ -1467,10 +1508,29 @@ async function downloadCourse(courseId, courseName, domain, onProgress, ethyra =
   // re-downloaded. Generated documents (pages, assignments, CSVs) are always
   // re-exported. The inventory itself is written after the file filters below,
   // on every run, so downloads made before the toggle was enabled still count.
+  //
+  // ── Ethyra fork: never incremental, and the reason is not performance ──
+  //
+  // Skipping an unchanged file client-side destroys the only information the
+  // backend needs to tell two different things apart. It dedupes by
+  // `content_sha256` across every upload a student has ever made, from either
+  // ingest path, and reports a file as `unchanged` rather than `skipped`. A file
+  // absent from the archive is not "unchanged" to it — it is a file the student
+  // no longer has, and the profile is rebuilt on what the upload contains.
+  //
+  // So an incremental Ethyra export would produce a smaller archive, a manifest
+  // that agrees with it, and a rewound profile. Internally consistent and wrong,
+  // in the same way as the four folder and role bugs before it.
+  //
+  // Nothing in this fork can set `incrementalMode` today — the popup has no
+  // settings and upstream's options page is deliberately not loaded — so no
+  // export has been filtered. It is guarded because "unreachable" is a property
+  // of the current UI, not of the code, and `git merge upstream/main` is a
+  // supported operation here.
   let skippedCount = 0;
   const incrementalKey = `incremental_${courseId}`;
   const incrementalRecord = {};
-  if (settings.incrementalMode) {
+  if (!ethyra && settings.incrementalMode) {
     const stored = await new Promise((r) => chrome.storage.local.get(incrementalKey, (d) => r(d[incrementalKey] || {})));
 
     const filtered = [];
@@ -1500,7 +1560,12 @@ async function downloadCourse(courseId, courseName, domain, onProgress, ethyra =
   const VIDEO_EXTENSIONS = /\.(mp4|mov|avi|mkv|webm|wmv|flv|m4v)$/i;
   let filteredOutCount = 0;
 
-  if (settings.excludeVideos || settings.maxFileSizeMB > 0) {
+  // Ethyra fork: the same defect three blocks down, and worth naming separately.
+  // `maxFileSizeMB` would drop a student's submission with a log line nobody
+  // reads, and `excludeVideos` would drop a media-recording submission — which
+  // is submitted work. Ethyra has its own per-file cap in `collect.js`, applied
+  // where it produces a warning that travels with the upload.
+  if (!ethyra && (settings.excludeVideos || settings.maxFileSizeMB > 0)) {
     const maxBytes = settings.maxFileSizeMB > 0 ? settings.maxFileSizeMB * 1024 * 1024 : Infinity;
     const before = filesToDownload.length;
 
@@ -1534,16 +1599,26 @@ async function downloadCourse(courseId, courseName, domain, onProgress, ethyra =
   // toggle later immediately skips what earlier runs already downloaded.
   // Files skipped as unchanged above keep their original entry; files excluded
   // by the video/size filters were not downloaded, so they are not recorded.
-  for (const file of filesToDownload) {
-    if (!isSynthetic(file)) {
-      incrementalRecord[file.path + file.filename] = {
-        t: Date.now(),
-        m: file.updatedAt || "",
-        s: file.size || 0,
-      };
+  //
+  // Ethyra fork: this write is skipped too, and it is the half that was actually
+  // happening — it sits outside the `incrementalMode` check, so every Ethyra
+  // export has been recording an inventory of files it never downloaded into
+  // `incremental_<courseId>`. Nothing reads it in this fork, which makes it
+  // storage spent on nothing against an unrequested quota; and it is a record of
+  // local downloads asserting files that only ever went to Ethyra, which is
+  // exactly the claim a later reader would trust.
+  if (!ethyra) {
+    for (const file of filesToDownload) {
+      if (!isSynthetic(file)) {
+        incrementalRecord[file.path + file.filename] = {
+          t: Date.now(),
+          m: file.updatedAt || "",
+          s: file.size || 0,
+        };
+      }
     }
+    chrome.storage.local.set({ [incrementalKey]: incrementalRecord });
   }
-  chrome.storage.local.set({ [incrementalKey]: incrementalRecord });
 
   // --- Inaccessible linked files report -------------------------------------
   // Surface every linked file we found but couldn't fetch, with the reason.
@@ -1705,10 +1780,19 @@ async function downloadCourse(courseId, courseName, domain, onProgress, ethyra =
   for (const f of filesToDownload) {
     if (f.rawBody === undefined) continue;
     const rewritten = rewriteCanvasLinks(f.rawBody, urlMap, f.path);
-    f.url = isMarkdown
-      ? toMarkdownDataUri(f.title, htmlToMarkdown(rewritten))
-      : toHtmlDataUri(f.title, rewritten, f.path);
+    // Ethyra fork: a rich-text submission is the student's own document and goes
+    // out as itself — links repointed, nothing added. `toHtmlDataUri` would
+    // wrap it in a page with a heading the student did not write, and link a
+    // stylesheet this archive no longer carries. Sanitised on the way out for
+    // the same reason upstream sanitises: it strips scripts, `on*` handlers and
+    // `javascript:` URLs, and touches no prose.
+    f.url = f.bareHtml
+      ? `data:text/html;charset=utf-8,${encodeURIComponent(sanitizeHtml(rewritten))}`
+      : isMarkdown
+        ? toMarkdownDataUri(f.title, htmlToMarkdown(rewritten))
+        : toHtmlDataUri(f.title, rewritten, f.path);
     delete f.rawBody;
+    delete f.bareHtml;
     delete f.title;
     delete f.resourceType;
     delete f.resourceId;

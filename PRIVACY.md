@@ -53,9 +53,12 @@ cannot be undone by a bug.
 - **No class statistics.** The class average and median that Canvas will happily
   return are not requested.
 - **Nothing about anyone else.** No other student's work, submissions, grades or
-  name. The extension only ever calls Canvas endpoints scoped to your own
-  account; the endpoints that return other students' data require instructor
-  permissions this extension never asks for and could not use.
+  name. The endpoints that return other students' data are reachable by anyone
+  Canvas has made a teacher, TA or course designer — so if you hold any of those
+  roles, the limit cannot come from what Canvas permits and has to come from the
+  extension. It does: a course you teach or assist in is **skipped before a
+  single submission is fetched**, and you are told which courses were skipped
+  and why. Only courses you are taking are read.
 - **No course materials library.** Course files, pages, modules, announcements,
   discussions, quizzes and the syllabus are not collected.
 - **No browsing history.** Nothing of the extension is placed in any web page

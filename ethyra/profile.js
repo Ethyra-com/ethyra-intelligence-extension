@@ -67,10 +67,39 @@ const ETHYRA_MAX_FILE_BYTES = 50 * 1024 * 1024;
 /** Whole-archive cap, across every course. Mirrors the backend's `MAX_UPLOAD_BYTES`. */
 const ETHYRA_MAX_TOTAL_BYTES = 500 * 1024 * 1024;
 
+/**
+ * Thrown when a course is one the user teaches rather than takes.
+ *
+ * ── Why a role check exists at all ────────────────────────────────────
+ *
+ * Upstream serves teachers and students alike, and its collector branches on
+ * `fetchCourseRole` — true for `teacher`, `ta` and `designer`. The teacher
+ * branch fetches every student's submissions, comments and rubric marks,
+ * because mirroring a course you teach is the thing it is for.
+ *
+ * This fork measures one person's own work. A course the user teaches has none
+ * of that in it, so there is nothing to collect and every reason not to look:
+ * the teacher branch shares `renderSubmission` with the student branch, and
+ * that function records into the Ethyra recorder. Nothing reaches the archive
+ * today — the teacher path files land under `Submissions/<assignment>/<student>/`
+ * while `collect.js` claims only files sitting in the assignment's own folder,
+ * so they are dropped — but that is a path mismatch, not a decision. One
+ * refactor aligning those folders would begin uploading other students' work
+ * under the teacher's account, and nothing would fail.
+ *
+ * The check is therefore where it cannot be bypassed: before any submission is
+ * fetched, not after.
+ *
+ * Carried as a code rather than matched on message text, so `collect.js` can
+ * tell a course deliberately skipped from a course that failed.
+ */
+const ETHYRA_NOT_A_STUDENT = "ETHYRA_NOT_A_STUDENT";
+
 if (typeof module !== "undefined" && module.exports) {
   module.exports = {
     ETHYRA_CONTENT_TYPES,
     ETHYRA_MAX_FILE_BYTES,
     ETHYRA_MAX_TOTAL_BYTES,
+    ETHYRA_NOT_A_STUDENT,
   };
 }
