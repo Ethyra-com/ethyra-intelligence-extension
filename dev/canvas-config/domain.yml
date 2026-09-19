@@ -1,0 +1,19 @@
+# Mounted over the image's own `config/domain.yml`.
+#
+# The image ships `canvas.docker` for both production and development, which is
+# the hostname its upstream compose serves through an nginx-proxy we do not run.
+# Canvas mints ABSOLUTE file URLs from this value — `http://canvas.docker/users/3/
+# files/46/...?sf_verifier=...` — so with the stock config every attachment
+# download fails in the browser with ERR_NAME_NOT_RESOLVED, while every `/api/v1`
+# call succeeds. An export then collects ten assignments and zero bytes.
+#
+# The API responses do not depend on this, which is why the failure is invisible
+# until something actually follows an attachment URL.
+development:
+  domain: "localhost:9100"
+
+test:
+  domain: localhost
+
+production:
+  domain: "canvas.docker"

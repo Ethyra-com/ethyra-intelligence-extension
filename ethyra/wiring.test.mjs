@@ -15,7 +15,7 @@
  * inventing a JavaScript scope model.
  */
 
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import test from "node:test";
@@ -300,10 +300,455 @@ test("the service worker imports the auth module it uses", () => {
   const sw = manifest.background.service_worker;
   const source = read(sw);
   assert.match(source, /importScripts\("\.\/auth\.js"\)/);
-  for (const symbol of ["signIn", "signOut", "getAccessToken", "currentUser"]) {
+  for (const symbol of ["signIn", "signUp", "signOut", "getAccessToken", "currentUser"]) {
     assert.match(read("ethyra/auth.js"), new RegExp(`^async function ${symbol}\\b`, "m"));
     assert.match(source, new RegExp(`\\b${symbol}\\(`));
   }
+});
+
+test("a release build carries no local-development host permission", (t) => {
+  // `http://localhost:8010/*` is here so a developer can point the extension at
+  // a backend on their own machine. A service-worker fetch to a host in
+  // `host_permissions` is exempt from CORS; without the entry, sign-in from the
+  // worker carries `Origin: chrome-extension://…`, which the backend does not
+  // admit on `/api/auth/*` — correctly, since that is the same door it keeps
+  // shut against Canvas origins.
+  //
+  // It must not ship. A published extension holding a localhost permission can
+  // reach whatever happens to be listening on that port on a reviewer's machine
+  // or a student's, which is both a Web Store review finding and true.
+  //
+  // Gated on the version for the same reason as the privacy placeholders: the
+  // store requires a bump on every submission, so it is the one thing that
+  // cannot be forgotten on the way out.
+  const local = manifest.host_permissions.filter((o) => /localhost|127\.0\.0\.1/.test(o));
+
+  if (manifest.version.startsWith("0.")) {
+    if (local.length) t.diagnostic(`${local.join(", ")} present for local dev — blocking at version 1.0.0`);
+    return;
+  }
+
+  assert.deepEqual(local, [], "remove the localhost host permission before releasing");
+});
+
+test("sign-up is wired end to end, and asks for consent rather than assuming it", () => {
+  const html = read(manifest.action.default_popup);
+  const popup = code("ethyra/popup.js");
+  const auth = code("ethyra/auth.js");
+  // Raw rather than comment-stripped: `code()` blanks the rest of this file the
+  // moment it meets the `/*` that ends "*://*.canvas-user-content.com/*".
+  const sw = read(manifest.background.service_worker);
+
+  // The view exists and the student can reach it from the signed-out screen.
+  assert.match(html, /id="view-signup"/, "there is no sign-up view");
+  assert.match(html, /id="go-signup"/, "nothing links to the sign-up view");
+  assert.match(popup, /show\("signup"\)/, "the popup never shows the sign-up view");
+
+  // The message crosses popup → worker → auth module.
+  assert.match(popup, /ETHYRA_SIGN_UP/);
+  assert.match(sw, /case "ETHYRA_SIGN_UP"/);
+  assert.match(sw, /\bsignUp\(/);
+
+  // Consent comes from a control, not from a literal in the request body. The
+  // backend refuses a sign-up without `accept_terms`, and the way to clear that
+  // check must never be to assert it on the student's behalf.
+  assert.match(html, /id="signup-terms"[^>]*type="checkbox"|type="checkbox"[^>]*id="signup-terms"/);
+  assert.match(popup, /signup-terms"\]\.checked/, "the terms checkbox is never read");
+  assert.match(auth, /accept_terms: acceptTerms === true/, "consent must be carried, not defaulted");
+
+  // No WorkOS credential may ever appear in the extension, and nothing here may
+  // call WorkOS directly. The backend holds the keys; an extension bundle is
+  // world-readable, so a secret shipped here is a secret published.
+  //
+  // Matched as CODE rather than as the word: these files discuss WorkOS at
+  // length, and on purpose — the first version of this test failed on the very
+  // comment explaining that the keys must not be here. So the patterns look for
+  // a credential being bound to something, or the host appearing inside a string
+  // literal, neither of which prose does.
+  //
+  // Read raw rather than comment-stripped because `code()` blanks the rest of
+  // background.js at the `/*` ending "*://*.canvas-user-content.com/*", and a
+  // security assertion that passes because it was handed an empty string is
+  // worse than no assertion at all.
+  const FORBIDDEN = [
+    /WORKOS_(?:API_KEY|CLIENT_ID)\s*[:=]/, //        a credential bound to a name
+    /['"`][^'"`\n]*workos\.com[^'"`\n]*['"`]/i, //   the host inside a string literal
+  ];
+  for (const file of ["ethyra/auth.js", "ethyra/background.js", "ethyra/popup.js"]) {
+    const source = read(file);
+    for (const pattern of FORBIDDEN) {
+      assert.ok(
+        !pattern.test(source),
+        `${file} must not carry a WorkOS credential or call WorkOS directly (matched ${pattern})`
+      );
+    }
+  }
+});
+
+test("the popup's theme loads no remote resource", () => {
+  // The frontend's `lpTheme.css` pulls Pixelify Sans with
+  // `@import url('https://fonts.googleapis.com/...')`. An extension page runs
+  // under a CSP that forbids remote subresources, so copying that import across
+  // would not error — it would silently fall back to a system sans on every
+  // label, which is the precise mismatch the themed popup exists to fix.
+  //
+  // A silent visual regression has no failing symptom to notice, so the check
+  // has to be here rather than in someone's eyes.
+  const html = read(manifest.action.default_popup);
+  const css = read("ethyra/popup.css");
+
+  for (const [name, source] of [["popup.html", html], ["popup.css", css]]) {
+    const remote = source.match(/url\(\s*['"]?https?:\/\/[^)]+\)|@import\s+url\(\s*['"]?https?:/gi) || [];
+    assert.deepEqual(remote, [], `${name} references a remote resource the CSP will block`);
+  }
+
+  // Every face the theme names must exist as a local file, or the fallback is
+  // the same silent regression by another route.
+  const faces = [...css.matchAll(/url\('(fonts\/[^']+)'\)/g)].map((m) => m[1]);
+  assert.ok(faces.length >= 4, "the four faces of the theme are not all declared");
+  for (const face of faces) {
+    assert.ok(existsSync(join(ROOT, "ethyra", face)), `${face} is declared but not bundled`);
+  }
+
+  // The palette is a copy of the product's; these are the values that must not
+  // drift. If the frontend's `lpTheme.css` moves, copy it — do not re-taste it.
+  for (const token of ["--lp-bg: #0c0b0a", "--lp-fg: #f3ebe0", "--lp-orange: #fa680c"]) {
+    assert.ok(css.includes(token), `${token} does not match the product's theme`);
+  }
+});
+
+test("sign-up requires a first and last name", () => {
+  const html = read(manifest.action.default_popup);
+  const popup = code("ethyra/popup.js");
+
+  // Two fields, not one. Splitting a single "full name" box guesses where a
+  // given name ends, and guesses wrong on names it has no business guessing
+  // about — so the guess is not made.
+  assert.match(html, /id="signup-first"/);
+  assert.match(html, /id="signup-last"/);
+  assert.ok(!/id="signup-name"/.test(html), "a combined name field is back");
+  assert.ok(!/splitName/.test(popup), "a name-splitting heuristic is back");
+
+  // Both are refused when empty, before the request is made.
+  assert.match(popup, /if \(!firstName \|\| !lastName\)/, "empty names are not refused");
+});
+
+test("a finished export cannot be overwritten by a late progress message", () => {
+  // A successful upload sends two messages back to back — `{phase: "uploaded"}`
+  // from the XHR's onload, then EXPORT_DONE when it resolves. Both handlers are
+  // async, and the progress branch reads-then-writes, so an unserialised DONE
+  // landing between that read and that write is lost: the popup pins on
+  // "Uploaded — Ethyra is reading it now" for an export that succeeded.
+  //
+  // Observed against a local backend, where the two messages are adjacent
+  // enough for the window to matter.
+  const sw = read(manifest.background.service_worker);
+
+  assert.match(sw, /let exportStateQueue/, "state mutations are not serialised");
+  for (const branch of ["ETHYRA_EXPORT_PROGRESS", "ETHYRA_EXPORT_DONE", "ETHYRA_CLEAR_EXPORT"]) {
+    const start = sw.indexOf(`case "${branch}"`);
+    assert.ok(start > 0, `${branch} is gone`);
+    const body = sw.slice(start, start + 600);
+    assert.match(body, /withExportState\(/, `${branch} mutates export state outside the queue`);
+  }
+
+  // The read and the guard must be INSIDE the queued step. Reading first and
+  // queueing the write is the same race with more ceremony.
+  const progress = sw.slice(sw.indexOf('case "ETHYRA_EXPORT_PROGRESS"'), sw.indexOf('case "ETHYRA_EXPORT_DONE"'));
+  assert.ok(
+    progress.indexOf("withExportState(") < progress.indexOf("readExportState()"),
+    "the progress branch reads outside the queue, which is the original bug"
+  );
+});
+
+test("a stuck export is escapable from the popup", () => {
+  // An export whose content script dies leaves a "running" state nothing will
+  // finish. Without a control here the popup renders a progress bar forever and
+  // the only way out is the storage inspector.
+  const html = read(manifest.action.default_popup);
+  const popup = code("ethyra/popup.js");
+
+  assert.match(html, /id="progress-cancel"/, "the progress view has no way out");
+  const handler = popup.slice(popup.indexOf('els["progress-cancel"]'));
+  assert.match(handler.slice(0, 300), /ETHYRA_CLEAR_EXPORT/, "the control does not clear the state");
+});
+
+test("a successful upload is reported as analysis, not as finished", () => {
+  const sw = read(manifest.background.service_worker);
+  const popup = code("ethyra/popup.js");
+  const html = read(manifest.action.default_popup);
+
+  // The agents have not read a word when the upload returns 200. Settling on
+  // "done" there is what made the popup claim success and then sit on a
+  // sentence about Ethyra reading the files with no way to see whether it was.
+  assert.match(sw, /status: message\.error \? "failed" : message\.uploadId \? "analyzing" : "done"/);
+
+  assert.match(html, /id="view-analyzing"/, "there is no analysis view");
+  assert.match(popup, /show\("analyzing"\)/);
+  assert.match(sw, /case "ETHYRA_GET_RUN"/, "nothing asks the backend how the run is going");
+
+  // Polling belongs to the worker, which outlives the tab. A content script
+  // dies with its tab, and a student who navigates back to their coursework
+  // while waiting would take the only thing watching down with them.
+  assert.ok(
+    !/ETHYRA_GET_RUN|act\/runs/.test(read("ethyra/content.js")),
+    "the content script must not be what watches the run"
+  );
+
+  // The run is matched to OUR upload. Taking the newest would show a student
+  // somebody else's progress — or their own from another device.
+  assert.match(sw, /String\(r\.upload_id\) === String\(uploadId\)/);
+});
+
+test("the analysis view says the same things the web app says", () => {
+  // `RunProgress` in the frontend is the other half of one process. Two
+  // vocabularies for it is how a student ends up believing they are two.
+  const html = read(manifest.action.default_popup);
+  const popup = code("ethyra/popup.js");
+
+  assert.match(popup, /Reading your work/, "the frontend's phrase for this is 'Reading your work'");
+  assert.match(html, /Results appear as each one finishes/);
+
+  // `unchanged` and `skipped` look identical on a bar and mean opposite things.
+  assert.match(popup, /unchanged since your last upload/, "unchanged is not reported");
+  assert.match(popup, /already measured/, "already-measured files are not reported");
+
+  // The bar counts assignments. `calls_done` moves more smoothly and counts a
+  // unit the student never gave us.
+  assert.match(popup, /assignments_done/);
+  assert.ok(!/calls_done/.test(popup), "the bar must not count agent calls");
+
+  // Closing the popup must not be presented as cancelling.
+  assert.match(html, /You can close this/);
+});
+
+test("the analysis view offers the web app and a copy of what was sent", () => {
+  const html = read(manifest.action.default_popup);
+  const popup = code("ethyra/popup.js");
+  const content = code("ethyra/content.js");
+  const sw = read(manifest.background.service_worker);
+
+  assert.match(html, /id="analysis-open"/, "there is no way through to the web app");
+  assert.match(html, /id="analysis-download"/, "there is no way to save a copy");
+  assert.match(sw, /case "ETHYRA_OPEN_WEB_APP"/);
+
+  // The download is asked of the TAB. The bytes live in the page that built
+  // them, and routing a 300 MB Blob through `chrome.runtime.sendMessage` is the
+  // size problem `upload.js` exists to avoid.
+  assert.match(popup, /askPage\(\{ type: "ETHYRA_DOWNLOAD_ARCHIVE" \}\)/);
+  assert.match(content, /ETHYRA_DOWNLOAD_ARCHIVE/);
+  assert.ok(
+    !/ETHYRA_DOWNLOAD_ARCHIVE/.test(sw),
+    "the archive must not be routed through the service worker"
+  );
+
+  // The same bytes that were uploaded, not a rebuild: re-fetching from Canvas
+  // would take minutes and could legitimately produce a different archive,
+  // since attachment URLs expire and work can be resubmitted in between.
+  assert.match(content, /lastArchive = \{/, "the uploaded archive is not retained");
+  const assign = content.indexOf("lastArchive = {");
+  const upload = content.indexOf("uploadArchive(");
+  assert.ok(
+    assign > 0 && assign < upload,
+    "the copy must be retained BEFORE the upload — a failed upload is when it is most wanted"
+  );
+
+  // A dead tab is the common case, not an edge case, and must say which.
+  assert.match(popup, /Go back to that tab/);
+});
+
+test("no Canvas name reaches Ethyra", () => {
+  // The learning profile is labelled from the Ethyra account. Sending the name
+  // the student's school put in Canvas gave the backend a second, worse
+  // identity to label them with — and it won, because it arrived last.
+  const manifestSrc = code("ethyra/manifest.js");
+  const upload = code("ethyra/upload.js");
+  const content = code("ethyra/content.js");
+  const popup = code("ethyra/popup.js");
+
+  assert.ok(
+    !/sortable_name/.test(manifestSrc),
+    "the manifest must not carry the Canvas display name"
+  );
+
+  // `student_name` on the upload form is the same identity by another route.
+  // Nothing may pass one — the backend labels from the verified token instead.
+  for (const [name, src] of [["content.js", content], ["popup.js", popup]]) {
+    assert.ok(
+      !/studentName:/.test(src),
+      `${name} must not supply a student name to the upload`
+    );
+  }
+
+  // The scoping id is not a label and stays.
+  assert.match(manifestSrc, /canvas_user_id: id\(student\?\.id\)/);
+  assert.ok(upload.length > 0);
+});
+
+test("a second export cannot start while one is running or analysing", () => {
+  const sw = read(manifest.background.service_worker);
+  const content = code("ethyra/content.js");
+
+  const begin = sw.slice(sw.indexOf('case "ETHYRA_BEGIN_EXPORT"'), sw.indexOf('case "ETHYRA_EXPORT_PROGRESS"'));
+
+  // Enforced in the worker, which owns the state. The popup only hiding the
+  // button is a guard on the VIEW: it holds for one popup looking at a fresh
+  // state, and not for two Canvas tabs, nor for a popup opened before an
+  // export began and clicked after.
+  assert.match(begin, /withExportState\(/, "BEGIN_EXPORT does not take the state lock");
+  assert.match(begin, /state\.status === "running"/, "a running export does not block a second");
+  assert.match(begin, /state\.status === "analyzing"/, "an analysing run does not block a second");
+
+  // The write must be inside the same queued step as the read, or it is the
+  // same check-then-act race that let a finished export be overwritten.
+  assert.ok(
+    begin.indexOf("withExportState(") < begin.indexOf("readExportState()"),
+    "BEGIN_EXPORT reads outside the lock"
+  );
+  assert.ok(
+    begin.indexOf("readExportState()") < begin.indexOf('writeExportState({ status: "running"'),
+    "BEGIN_EXPORT writes before it has read"
+  );
+
+  // The per-tab guard stays. It is not redundant — it stops one tab being
+  // asked twice — but it is per tab and cannot see the other one.
+  assert.match(content, /if \(exportInFlight\)/, "the per-tab guard is gone");
+});
+
+test("an aborted upload cannot start an analysis", () => {
+  const sw = read(manifest.background.service_worker);
+  const content = code("ethyra/content.js");
+
+  // `analyzing` is reachable only with an uploadId, and an uploadId exists only
+  // when the server answered 2xx. An upload killed in flight — the tab closed,
+  // the page navigated — never produces one, so it cannot be mistaken for work
+  // Ethyra is reading.
+  assert.match(sw, /message\.uploadId \? "analyzing" : "done"/);
+
+  // The id comes from the upload's own response, never from anything the
+  // client knew beforehand.
+  assert.match(content, /uploadId: upload\?\.id \|\| null/);
+
+  // And a thrown export reports an error with no id at all, which lands on
+  // `failed` regardless of what the upload had done by then.
+  //
+  // Anchored inside `runExport` rather than to the first `catch` in the file —
+  // the download handler has one too, and an earlier version of this test was
+  // reading that instead and asserting nothing about the export path.
+  const runExport = content.slice(content.indexOf("async function runExport"));
+  const failure = runExport.slice(runExport.indexOf("} catch (err) {"));
+  assert.match(failure.slice(0, 400), /type: "ETHYRA_EXPORT_DONE"/);
+  assert.ok(
+    !/uploadId/.test(failure.slice(0, 400)),
+    "the failure path must not carry an upload id"
+  );
+});
+
+test("the analysis is polled at the pace the analysis moves", () => {
+  // The export poller runs at 600ms: it is local, continuous, and costs a
+  // message to a worker in the same browser. The analysis is none of those —
+  // it advances one assignment at a time over minutes, and every poll is an
+  // authenticated request that loads every analysis the student owns.
+  //
+  // Reusing the export's interval put ~100 requests a minute against the
+  // backend for a number that changes ten times in total, which is exactly
+  // what the server log showed during the first real run.
+  const popup = code("ethyra/popup.js");
+
+  assert.match(popup, /const ANALYSIS_POLL_MS = 4000/, "the analysis poll is not at the web app's pace");
+  assert.match(popup, /setInterval\([\s\S]{0,1200}?\}, ANALYSIS_POLL_MS\)/);
+
+  // One timer for both, so the two pollers can never run at once and double
+  // the rate this exists to bring down.
+  assert.equal(
+    (popup.match(/pollTimer = setInterval/g) || []).length,
+    2,
+    "each poller must own the shared timer"
+  );
+  assert.match(popup, /function startAnalysisPolling\(\)[\s\S]{0,80}stopPolling\(\)/);
+
+  // A run that never opens must not leave the view reading "Reading your work"
+  // forever about work nothing is reading.
+  assert.match(popup, /const ANALYSIS_STARTUP_POLLS = 30/);
+  assert.match(popup, /if \(\+\+waitingForRun < ANALYSIS_STARTUP_POLLS\) return;/);
+  // And a run that appears resets the budget — the wait was for it to exist.
+  assert.match(popup, /waitingForRun = 0;/);
+});
+
+test("the message that ends an export is not allowed to be lost", () => {
+  const content = code("ethyra/content.js");
+
+  // A lost progress frame costs a stale number for 600ms. A lost EXPORT_DONE
+  // costs the export: the state stays `running`, the popup renders a progress
+  // bar for an upload that landed minutes ago, and nothing will ever move it.
+  //
+  // MV3 kills an idle worker within seconds and a multi-minute upload is all
+  // idle from its point of view, so this is a routine failure rather than a
+  // theoretical one.
+  assert.match(content, /async function tellWorker\(/, "there is no reliable send");
+
+  // Both the success and the failure path. The failure path is the one that
+  // matters more — it is the only record a student gets of what went wrong.
+  const sends = [...content.matchAll(/(await tellWorker|chrome\.runtime\.sendMessage)\(\{\s*\n?\s*type: "ETHYRA_EXPORT_DONE"/g)];
+  assert.equal(sends.length, 2, "expected exactly two EXPORT_DONE sends");
+  for (const [match] of sends) {
+    assert.ok(
+      match.startsWith("await tellWorker"),
+      "EXPORT_DONE must be awaited and retried, not fired and forgotten"
+    );
+  }
+
+  // Retrying into a dead extension is a slower way to fail: an invalidated
+  // context has nothing listening and never will.
+  assert.match(content, /if \(!chrome\.runtime\?\.id\) return null;/);
+
+  // Acknowledged, not assumed. Every branch the worker answers replies {ok:true}.
+  assert.match(content, /if \(response\?\.ok\) return response;/);
+});
+
+test("a running analysis is shown without needing the Canvas tab", () => {
+  // Navigating away kills the content script, but the analysis is server-side
+  // and the worker holds the state. Reopening the popup must land back on the
+  // analysis view — which means the `analyzing` branch has to be reached before
+  // anything that requires a live content script.
+  const popup = code("ethyra/popup.js");
+  const boot = popup.slice(popup.indexOf("async function boot()"));
+
+  const analyzing = boot.indexOf('exportState.status === "analyzing"');
+  const needsTab = boot.indexOf("showReady(session)");
+  assert.ok(analyzing > 0 && needsTab > 0, "boot lost a branch");
+  assert.ok(
+    analyzing < needsTab,
+    "the analysis view must not depend on the Canvas tab still being there"
+  );
+});
+
+test("only a settled run ends the analysis view", () => {
+  // An empty poll is not an ending: the run may not be open yet, or the request
+  // simply failed. Treating either as finished tells a student their analysis
+  // completed when it had not started.
+  const popup = code("ethyra/popup.js");
+  assert.match(popup, /RUN_TERMINAL = new Set\(\["ready", "partial", "failed"\]\)/);
+
+  // The terminal check is reached only past the `!run` branch, so it needs no
+  // truthiness guard of its own — but the ORDER is the property, and losing it
+  // would mean an empty poll reading `undefined.status`.
+  const poller = popup.slice(popup.indexOf("function startAnalysisPolling"));
+  const emptyBranch = poller.indexOf("if (!run) {");
+  const terminalCheck = poller.indexOf("RUN_TERMINAL.has(run.status)");
+  assert.ok(emptyBranch > 0 && terminalCheck > 0, "the analysis poller lost a branch");
+  assert.ok(
+    emptyBranch < terminalCheck,
+    "an empty poll must be handled before the run's status is read"
+  );
+
+  // An empty poll leaves the view alone rather than ending it — the request may
+  // simply have failed, and a failed request is not a finished analysis.
+  const empty = poller.slice(emptyBranch, terminalCheck);
+  assert.ok(
+    !/ETHYRA_FINISH_ANALYSIS", run: run/.test(empty),
+    "an empty poll must not report a run it does not have"
+  );
 });
 
 test("the popup loads its own script and nothing else", () => {

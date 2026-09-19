@@ -1,0 +1,352 @@
+/**
+ * The popup, in the product's theme.
+ *
+ * ── Why this is a copy, and what keeps it honest ──────────────────────
+ *
+ * The values here are lifted verbatim from the Intelligence frontend —
+ * `src/styles/lpTheme.css` for the palette and the faces,
+ * `src/features/auth/authTheme.css` for the signed-out controls. An extension
+ * cannot import from that repo: it has no build step, no package manager and no
+ * network at render time, and the two ship on different schedules to different
+ * stores.
+ *
+ * So this is a second copy of a design system, which is a thing worth being
+ * uncomfortable about. It is kept honest by being a LITERAL copy — same token
+ * names, same hex values, same class names (`lp-auth-input`, `lp-auth-submit`)
+ * — so a change over there is a find-and-replace here rather than a
+ * re-interpretation. Anything invented instead of copied is drift on day one;
+ * the previous version of this file invented every value it used, and the
+ * result did not look like the product.
+ *
+ * ── Fonts are bundled, because they have to be ────────────────────────
+ *
+ * The frontend pulls Pixelify Sans from Google Fonts with an `@import`. An
+ * extension page runs under a CSP that forbids remote subresources outright, so
+ * that import would silently fail and every label would fall back to a system
+ * sans — which is exactly the mismatch this file exists to fix. All four faces
+ * are therefore local files in `ethyra/fonts/`.
+ *
+ * Pixelify Sans is the Google Fonts latin subset (7 KB) rather than the full
+ * family: the popup renders its own fixed English strings, and the Cyrillic and
+ * latin-ext subsets would be 3× the bytes for glyphs nothing here can produce.
+ */
+
+@font-face {
+  font-family: mondwest;
+  src: url('fonts/Mondwest.woff2') format('woff2');
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: neueBit;
+  src: url('fonts/NeueBit.woff2') format('woff2');
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: GeistPixelSquare;
+  src: url('fonts/GeistPixel-Square.woff2') format('woff2');
+  font-weight: 500;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'Pixelify Sans';
+  src: url('fonts/PixelifySans-Latin.woff2') format('woff2');
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+
+/* Verbatim from `lpTheme.css`. Do not adjust these to taste — if the product's
+   palette moves, copy the new values; if it has not moved, neither should
+   these. */
+:root {
+  --lp-bg: #0c0b0a;
+  --lp-fg: #f3ebe0;
+  --lp-muted: #8f877d;
+  --lp-line: rgba(243, 235, 224, 0.14);
+  --lp-orange: #fa680c;
+  --lp-orange-soft: rgba(250, 104, 12, 0.14);
+  --lp-danger: #ff6b6b;
+  --lp-ok: #7ac74f;
+  --lp-hero: mondwest, 'Pixelify Sans', serif;
+  --lp-head: 'Pixelify Sans', sans-serif;
+  --lp-body: neueBit, GeistPixelSquare, sans-serif;
+  --lp-ui: GeistPixelSquare, 'Geist Mono', ui-monospace, monospace;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  /* 360px is the practical ceiling for a popup before Chrome starts clipping on
+     small displays. The auth card is 21rem in the web app and sits centred; here
+     it is the whole width, because a popup has no page to be centred on. */
+  width: 360px;
+  margin: 0;
+  padding: 18px 18px 20px;
+  background: var(--lp-bg);
+  color: var(--lp-fg);
+  font-family: var(--lp-ui);
+  font-weight: 500;
+  font-size: 13px;
+  line-height: 1.5;
+  font-synthesis: none;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* The wordmark, in the hero face, in the same place as the web app's nav — so
+   the popup is recognisably part of the thing you signed in to. */
+.lp-brand {
+  font-family: var(--lp-hero);
+  font-size: 22px;
+  line-height: 1;
+  letter-spacing: -0.3px;
+  margin: 0 0 4px;
+  font-weight: 400;
+}
+
+.lp-sub {
+  font-size: 0.72rem;
+  line-height: 1.5;
+  color: var(--lp-muted);
+  margin: 0 0 18px;
+}
+
+/* The nav's section-label treatment — uppercase, tracked, Pixelify — so a form
+   label reads as the same kind of thing as "SUBJECTS" on the profile. */
+.lp-auth-label {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.5rem;
+  font-family: var(--lp-head);
+  font-size: 11px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--lp-muted);
+  margin: 0 0 0.4rem;
+}
+
+.lp-auth-field {
+  display: flex;
+  flex-direction: column;
+  margin-bottom: 0.9rem;
+}
+
+/* Square edges, transparent fill, hairline border. The rounded dark-grey pill
+   the first version used was the shadcn default this theme exists to replace. */
+.lp-auth-input {
+  width: 100%;
+  padding: 0.55rem 0.65rem;
+  border: 1px solid var(--lp-line);
+  border-radius: 0;
+  background: transparent;
+  color: var(--lp-fg);
+  font-family: var(--lp-ui);
+  font-size: 0.82rem;
+  font-weight: inherit;
+  line-height: 1.3;
+  appearance: none;
+}
+
+.lp-auth-input::placeholder {
+  color: var(--lp-muted);
+}
+
+.lp-auth-input:focus {
+  outline: none;
+  border-color: var(--lp-orange);
+}
+
+.lp-auth-input:disabled {
+  opacity: 0.55;
+}
+
+/* Chrome paints a light-blue block over autofilled fields and ignores
+   `background`. An inset shadow the size of the field is the only way to cover
+   it, and the text colour needs its own property for the same reason. */
+.lp-auth-input:-webkit-autofill,
+.lp-auth-input:-webkit-autofill:hover,
+.lp-auth-input:-webkit-autofill:focus {
+  -webkit-box-shadow: 0 0 0 100px var(--lp-bg) inset;
+  -webkit-text-fill-color: var(--lp-fg);
+  caret-color: var(--lp-fg);
+}
+
+/* Two fields on one row, for first and last name. They are separate inputs
+   rather than one "full name" box because the backend stores them separately
+   and splitting a typed string guesses wrong on names it has no business
+   guessing about. */
+.lp-auth-row {
+  display: flex;
+  gap: 0.6rem;
+}
+
+.lp-auth-row > .lp-auth-field {
+  flex: 1;
+  min-width: 0;
+}
+
+/* The orange button, the same one the nav and the empty states use: there is
+   one primary action per screen and it always looks like this. */
+.lp-auth-submit {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.4rem;
+  width: 100%;
+  padding: 0.6rem 0.7rem;
+  margin-top: 0.5rem;
+  border: 1px solid var(--lp-orange);
+  border-radius: 0;
+  background: var(--lp-orange);
+  color: #1a0d04;
+  font-family: var(--lp-ui);
+  font-size: 0.78rem;
+  font-weight: 500;
+  letter-spacing: 0.02em;
+  cursor: pointer;
+}
+
+.lp-auth-submit:hover:not(:disabled) {
+  background: #ff7a26;
+  border-color: #ff7a26;
+}
+
+.lp-auth-submit:disabled {
+  cursor: default;
+  opacity: 0.5;
+}
+
+/* Bordered rather than filled: two orange buttons on one screen is two primary
+   actions. */
+.lp-auth-secondary {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  padding: 0.5rem 0.7rem;
+  border: 1px solid var(--lp-line);
+  border-radius: 0;
+  background: transparent;
+  color: var(--lp-fg);
+  font-family: var(--lp-ui);
+  font-size: 0.74rem;
+  cursor: pointer;
+}
+
+.lp-auth-secondary:hover {
+  background: rgba(243, 235, 224, 0.05);
+}
+
+.lp-auth-link {
+  color: var(--lp-orange);
+  text-decoration: none;
+  cursor: pointer;
+}
+
+.lp-auth-link:hover {
+  text-decoration: underline;
+}
+
+.lp-auth-hint {
+  font-size: 0.7rem;
+  line-height: 1.45;
+  color: var(--lp-muted);
+  margin: 0.8rem 0 0;
+}
+
+.lp-auth-error {
+  font-size: 0.72rem;
+  line-height: 1.45;
+  color: var(--lp-danger);
+  margin: 0.7rem 0 0;
+}
+
+.lp-ok {
+  color: var(--lp-ok);
+}
+
+/* The consent row is a row, not a block — a checkbox that wraps under its own
+   label reads as two separate controls. */
+.lp-check {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin: 1rem 0 0;
+  font-size: 0.7rem;
+  line-height: 1.45;
+  color: var(--lp-muted);
+}
+
+.lp-check input {
+  margin: 2px 0 0;
+  flex: none;
+  accent-color: var(--lp-orange);
+}
+
+.lp-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+}
+
+.lp-who {
+  font-size: 0.72rem;
+  color: var(--lp-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.lp-signout {
+  width: auto;
+  margin: 0;
+  padding: 3px 8px;
+  font-size: 0.68rem;
+  flex: none;
+}
+
+.lp-body {
+  font-size: 0.74rem;
+  line-height: 1.5;
+  color: var(--lp-muted);
+  margin: 1rem 0 0;
+}
+
+/* Square, like everything else. The web app's progress treatments use the same
+   hairline-and-orange pairing. */
+.lp-bar {
+  height: 4px;
+  background: var(--lp-line);
+  overflow: hidden;
+  margin-top: 0.8rem;
+}
+
+.lp-bar > div {
+  height: 100%;
+  width: 0;
+  background: var(--lp-orange);
+  transition: width 0.2s;
+}
+
+.lp-warnings {
+  margin: 0.8rem 0 0;
+  padding-left: 1rem;
+  color: var(--lp-muted);
+  font-size: 0.68rem;
+  line-height: 1.5;
+}
+
+[hidden] {
+  display: none !important;
+}

@@ -17,7 +17,8 @@
   "host_permissions": [
     "*://*.instructure.com/*",
     "*://*.canvas-user-content.com/*",
-    "https://api.ethyra.com/*"
+    "https://api.ethyra.com/*",
+    "http://localhost:8001/*"
   ],
   "declarative_net_request": {
     "rule_resources": [
