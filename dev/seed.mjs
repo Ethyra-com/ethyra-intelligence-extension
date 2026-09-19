@@ -19,191 +19,24 @@
  * duplicating them. Canvas has no upsert, so this is a lookup-then-create.
  */
 
-const CANVAS = process.env.CANVAS_URL || "http://localhost:9100";
-const TOKEN =
-  process.env.CANVAS_TOKEN ||
-  "YPhZLv6wyABWUeEKMz99VGQvwNmETtZ8eerYHf4Afzv6uR8m4kAWnvD2wBCKkAF7";
+import {
+  CANVAS,
+  api,
+  uploadFile,
+  findOrCreateUser,
+  findOrCreateCourse,
+  enrol,
+  findOrCreateAssignment,
+  submit,
+  gradeAndComment,
+  sleep,
+} from "./canvas.mjs";
 
 const STUDENT_LOGIN = "student@example.com";
 const STUDENT_PASSWORD = "password123";
 const STUDENT_NAME = "Test Student";
 
-const ACCOUNT = 1;
-
-// ── HTTP ────────────────────────────────────────────────────────────────────
-
-/**
- * Canvas string ids, always.
- *
- * The extension sends this Accept header, so ids come back as strings there.
- * Seeding under the same header means the ids this script prints are the ids
- * the export will carry — worth it for the half hour it saves when a manifest
- * path disagrees with what you expected.
- */
-const HEADERS = {
-  Authorization: `Bearer ${TOKEN}`,
-  Accept: "application/json+canvas-string-ids",
-};
-
-async function api(path, { method = "GET", form, as } = {}) {
-  const url = new URL(path.startsWith("http") ? path : `${CANVAS}/api/v1${path}`);
-  if (as) url.searchParams.set("as_user_id", as);
-
-  const init = { method, headers: { ...HEADERS } };
-  if (form) {
-    const body = new URLSearchParams();
-    for (const [k, v] of Object.entries(form)) {
-      if (Array.isArray(v)) v.forEach((item) => body.append(k, item));
-      else if (v != null) body.append(k, String(v));
-    }
-    init.body = body;
-    init.headers["Content-Type"] = "application/x-www-form-urlencoded";
-  }
-
-  const res = await fetch(url, init);
-  const text = await res.text();
-  if (!res.ok) {
-    throw new Error(`${method} ${url.pathname} → ${res.status}\n${text.slice(0, 400)}`);
-  }
-  return text ? JSON.parse(text) : null;
-}
-
-// ── Upload, the three-step dance ────────────────────────────────────────────
-
-/**
- * Canvas never accepts file bytes on the resource endpoint. You ask for a slot,
- * POST the bytes wherever it points, and the response to THAT is the file. The
- * middle step is not authenticated by our bearer token — the upload params carry
- * their own signature — so sending the Authorization header there is at best
- * ignored and at worst a 400.
- */
-async function uploadFile({ name, contentType, bytes, as }) {
-  const slot = await api(`/users/self/files`, {
-    method: "POST",
-    as,
-    form: {
-      name,
-      size: bytes.byteLength,
-      content_type: contentType,
-      parent_folder_path: "/my files/submissions",
-      on_duplicate: "rename",
-    },
-  });
-
-  const form = new FormData();
-  for (const [k, v] of Object.entries(slot.upload_params || {})) form.append(k, v);
-  form.append("file", new Blob([bytes], { type: contentType }), name);
-
-  const res = await fetch(slot.upload_url, { method: "POST", body: form, redirect: "follow" });
-  if (!res.ok) throw new Error(`upload POST → ${res.status} ${await res.text()}`);
-
-  const text = await res.text();
-  // Canvas answers either with the file JSON or with a confirmation location
-  // it has already followed for us. Both end here.
-  try {
-    return JSON.parse(text);
-  } catch {
-    throw new Error(`upload returned non-JSON: ${text.slice(0, 200)}`);
-  }
-}
-
-// ── Lookup-then-create helpers ──────────────────────────────────────────────
-
-async function findOrCreateStudent() {
-  const found = await api(
-    `/accounts/${ACCOUNT}/users?search_term=${encodeURIComponent(STUDENT_LOGIN)}`
-  );
-  if (found.length) return found[0];
-  return api(`/accounts/${ACCOUNT}/users`, {
-    method: "POST",
-    form: {
-      "user[name]": STUDENT_NAME,
-      "user[terms_of_use]": true,
-      "user[skip_registration]": true,
-      "pseudonym[unique_id]": STUDENT_LOGIN,
-      "pseudonym[password]": STUDENT_PASSWORD,
-      "pseudonym[send_confirmation]": false,
-    },
-  });
-}
-
-async function findOrCreateCourse(name) {
-  const all = await api(`/accounts/${ACCOUNT}/courses?per_page=100&search_term=${encodeURIComponent(name)}`);
-  const hit = all.find((c) => c.name === name);
-  if (hit) return hit;
-  const course = await api(`/accounts/${ACCOUNT}/courses`, {
-    method: "POST",
-    form: { "course[name]": name, "course[course_code]": name.slice(0, 12), offer: true },
-  });
-  // `offer: true` on create is honoured inconsistently across releases; the
-  // explicit publish is cheap and an unpublished course is invisible to the
-  // student, which looks exactly like the exporter finding nothing.
-  await api(`/courses/${course.id}`, { method: "PUT", form: { "course[event]": "offer" } });
-  return course;
-}
-
-async function enrol(courseId, userId, type) {
-  const existing = await api(`/courses/${courseId}/enrollments?user_id=${userId}&per_page=100`);
-  if (existing.some((e) => e.type === type)) return existing.find((e) => e.type === type);
-  return api(`/courses/${courseId}/enrollments`, {
-    method: "POST",
-    form: {
-      "enrollment[user_id]": userId,
-      "enrollment[type]": type,
-      "enrollment[enrollment_state]": "active",
-      "enrollment[notify]": false,
-    },
-  });
-}
-
-async function findOrCreateAssignment(courseId, spec) {
-  const all = await api(`/courses/${courseId}/assignments?per_page=100`);
-  const hit = all.find((a) => a.name === spec.name);
-  if (hit) return hit;
-  return api(`/courses/${courseId}/assignments`, {
-    method: "POST",
-    form: {
-      "assignment[name]": spec.name,
-      "assignment[description]": spec.description || "",
-      "assignment[submission_types][]": spec.submissionTypes || ["online_upload"],
-      "assignment[points_possible]": spec.points ?? 100,
-      "assignment[due_at]": spec.dueAt,
-      "assignment[published]": true,
-    },
-  });
-}
-
-async function submit(courseId, assignmentId, studentId, payload) {
-  return api(`/courses/${courseId}/assignments/${assignmentId}/submissions`, {
-    method: "POST",
-    as: studentId,
-    form: payload,
-  });
-}
-
-async function gradeAndComment(courseId, assignmentId, studentId, { grade, comment }) {
-  const form = {};
-  if (grade != null) form["submission[posted_grade]"] = grade;
-  if (comment) form["comment[text_comment]"] = comment;
-  return api(`/courses/${courseId}/assignments/${assignmentId}/submissions/${studentId}`, {
-    method: "PUT",
-    form,
-  });
-}
-
 const enc = (s) => new TextEncoder().encode(s);
-
-/**
- * Canvas de-duplicates `submission_history` by `submitted_at` at one-second
- * resolution — two versions sharing a second are reported as one attempt, even
- * though both rows exist in `versions`.
- *
- * A student resubmitting days later never notices. A seeder firing two
- * submissions in the same tick gets a single-entry history and a very
- * convincing false negative: `attempt` reads 2, the history reads 1, and it
- * looks like the exporter dropped an attempt.
- */
-const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 // A real PNG — 1×1, transparent. Canvas rejects zero-byte uploads, and an
 // attachment whose bytes are not actually an image is a poor test of a pipeline
@@ -231,7 +64,11 @@ async function main() {
   const me = await api("/users/self");
   console.log(`Admin:  ${me.name} (id ${me.id})`);
 
-  const student = await findOrCreateStudent();
+  const student = await findOrCreateUser({
+    login: STUDENT_LOGIN,
+    name: STUDENT_NAME,
+    password: STUDENT_PASSWORD,
+  });
   console.log(`Student: ${student.name} (id ${student.id}) — ${STUDENT_LOGIN} / ${STUDENT_PASSWORD}`);
 
   // ── Course one: the text-heavy course ─────────────────────────────
@@ -351,17 +188,25 @@ async function main() {
   console.log(`  ✓ ${proofs.name} — two attempts`);
 
   // A teacher-attached file in the description: the linkedFiles harvest.
+  //
+  // Into the COURSE's files, not the admin's own. `/users/self/files` puts it
+  // in the uploader's personal folder, where the enrolled student gets 403 on
+  // the link — so the fixture would look correct, the export would warn that a
+  // linked file could not be fetched, and `linkedFiles` would never actually be
+  // exercised against a readable teacher attachment.
   const handout = await uploadFile({
     name: "constructions-handout.txt",
     contentType: "text/plain",
     bytes: enc("Constructions handout: compass and straightedge only.\n"),
-    as: null,
+    courseId: geometry.id,
   });
   const constructions = await findOrCreateAssignment(geometry.id, {
     name: "Constructions",
     description:
       `<p>Use the handout: ` +
-      `<a class="instructure_file_link" href="${CANVAS}/files/${handout.id}/download">handout</a></p>`,
+      // Course-scoped, matching where the file now lives. A bare `/files/<id>`
+      // link resolves for whoever owns the file and 403s for everyone else.
+      `<a class="instructure_file_link" href="${CANVAS}/courses/${geometry.id}/files/${handout.id}/download">handout</a></p>`,
     submissionTypes: ["online_upload"],
   });
   const cf = await uploadFile({

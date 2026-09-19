@@ -307,7 +307,7 @@ test("the service worker imports the auth module it uses", () => {
 });
 
 test("a release build carries no local-development host permission", (t) => {
-  // `http://localhost:8010/*` is here so a developer can point the extension at
+  // `http://localhost:8001/*` is here so a developer can point the extension at
   // a backend on their own machine. A service-worker fetch to a host in
   // `host_permissions` is exempt from CORS; without the entry, sign-in from the
   // worker carries `Origin: chrome-extension://…`, which the backend does not
@@ -749,6 +749,39 @@ test("only a settled run ends the analysis view", () => {
     !/ETHYRA_FINISH_ANALYSIS", run: run/.test(empty),
     "an empty poll must not report a run it does not have"
   );
+});
+
+test("the seeders share one Canvas client", () => {
+  // `seed.mjs` kept a private copy of the helpers after `canvas.mjs` was
+  // extracted for `seed-coldwar.mjs`, and the two drifted immediately: the
+  // shared `uploadFile` grew a `courseId` so a teacher handout lands in the
+  // course's files, and the private one did not. The Geometry handout went to
+  // the admin's personal folder, where the enrolled student gets 403 — so the
+  // `linkedFiles` fixture looked right and tested nothing.
+  //
+  // One client, or the next divergence is as quiet as that one.
+  for (const seeder of ["dev/seed.mjs", "dev/seed-coldwar.mjs"]) {
+    const src = read(seeder);
+    assert.match(src, /from "\.\/canvas\.mjs"/, `${seeder} does not use the shared client`);
+    for (const helper of ["uploadFile", "api", "findOrCreateAssignment"]) {
+      assert.ok(
+        !new RegExp(`^(async )?function ${helper}\\b`, "m").test(src),
+        `${seeder} reimplements ${helper} instead of importing it`
+      );
+    }
+  }
+
+  // A teacher's handout is course-scoped in both. Personal-folder uploads are
+  // for a student's own submission and nothing else.
+  for (const seeder of ["dev/seed.mjs", "dev/seed-coldwar.mjs"]) {
+    const src = read(seeder);
+    const handout = src.slice(src.indexOf("handout = await uploadFile({"));
+    assert.match(
+      handout.slice(0, 300),
+      /courseId:/,
+      `${seeder} uploads the teacher handout outside the course`
+    );
+  }
 });
 
 test("the popup loads its own script and nothing else", () => {
