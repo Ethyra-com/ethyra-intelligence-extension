@@ -191,8 +191,23 @@ function buildManifest({ canvasHost, extensionVersion, student, courses, capture
     extension_version: extensionVersion || null,
     captured_at: capturedAt,
     canvas_host: canvasHost || null,
+    // ── No Canvas name, deliberately ──────────────────────────────────
+    //
+    // This used to carry `sortable_name` — "Reyes, Ava" — and the backend
+    // labelled the whole learning profile with it. The result was a product
+    // addressing a student by an identity they did not choose here: the name
+    // their school put in Canvas, not the name on their Ethyra account, and
+    // the two are routinely different (a legal name against a used one, a
+    // maiden name, a transliteration, a name since changed).
+    //
+    // The account is the identity that belongs to the student, and the backend
+    // already knows it — every request arrives with a verified token carrying
+    // it. Sending a second, worse name invited exactly the mix-up it caused.
+    //
+    // `canvas_user_id` stays. It is a scoping key, not a label: it says which
+    // Canvas account an export came from, which matters when a student has
+    // more than one, and nothing renders it.
     student: {
-      name: text(student?.sortable_name || student?.name, 255),
       canvas_user_id: id(student?.id),
     },
     courses,

@@ -1,0 +1,108 @@
+# A local Canvas to test the Ethyra export against.
+#
+# Adapted from the `lthub/canvas-dev-only` published compose file. Two changes
+# from upstream's copy, both deliberate:
+#
+#   1. The `.arm` image tag. The plain tag is amd64 only and would run under
+#      Rosetta emulation on Apple Silicon — slow enough to matter for a Rails
+#      app in development mode, which recompiles assets on demand.
+#
+#   2. Upstream's `canvas.socat` service is dropped. It exists to bridge
+#      `VIRTUAL_HOST: .canvas.docker` for an nginx-proxy setup we do not run,
+#      and it listens on 9100 inside the network — the same port `canvas`
+#      already publishes, which reads as a conflict every time someone opens
+#      this file.
+#
+# Canvas runs in RAILS_ENV=development. The first page load after boot compiles
+# assets and takes several minutes. That is not a hang.
+
+services:
+  canvas.postgres:
+    image: pgvector/pgvector:pg14
+    volumes:
+      - canvasPostgresData:/var/lib/postgresql/data
+      # Populated by the `docker cp` step in README.md — the image carries its
+      # own DB init scripts and compose cannot extract them itself.
+      - ./docker/dev/canvas:/docker-entrypoint-initdb.d
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -h localhost -p 5432"]
+      start_period: 2m
+    environment:
+      POSTGRES_PASSWORD: sekret
+
+  canvas: &CANVAS
+    image: lthub/canvas-dev-only:release.2026-01-28.626.arm
+    ports:
+      - 9100:80
+    depends_on:
+      canvas.postgres:
+        condition: service_healthy
+      canvas.redis:
+        condition: service_started
+    volumes:
+      # Canvas mints absolute file URLs from `config/domain.yml`, and the image
+      # ships `canvas.docker` — a host that does not resolve from the browser.
+      # Every `/api/v1` call works regardless, so the stock config produces an
+      # export of ten assignments and zero bytes. See the file's own comment.
+      - ./canvas-config/domain.yml:/usr/src/app/config/domain.yml:ro
+      - api_docs:/usr/src/app/public/doc/api
+      - brandable_css_brands:/usr/src/app/app/stylesheets/brandable_css_brands
+      - bundler:/home/docker/.bundle/
+      - canvas-docker-gems:/home/docker/.gem/
+      - js-utils_es:/usr/src/app/packages/js-utils/es
+      - js-utils_lib:/usr/src/app/packages/js-utils/lib
+      - js-utils_node_modules:/usr/src/app/packages/js-utils/node_modules
+      - locales:/usr/src/app/config/locales/generated
+      - log:/usr/src/app/log
+      - node_modules:/usr/src/app/node_modules
+      - pacts:/usr/src/app/pacts
+      - public_dist:/usr/src/app/public/dist
+      - reports:/usr/src/app/reports
+      - styleguide:/usr/src/app/app/views/info
+      - tmp:/usr/src/app/tmp
+      - translations:/usr/src/app/public/javascripts/translations
+      - yardoc:/usr/src/app/.yardoc
+      - yarn-cache:/home/docker/.cache/yarn
+    environment:
+      VIRTUAL_HOST: .canvas.docker
+      CANVAS_DATABASE_HOST: canvas.postgres
+      CANVAS_REDIS_HOST: canvas.redis
+      HTTPS_METHOD: noredirect
+      POSTGRES_PASSWORD: sekret
+      # Development-only key from the published image. Not a secret, and not to
+      # be copied anywhere that matters.
+      ENCRYPTION_KEY: facdd3a131ddd8988b14f6e4e01039c93cfa0160
+      RAILS_ENV: development
+
+  # Submissions, notifications and file processing all run through delayed_job.
+  # Without this service, work appears to submit and then never finishes
+  # processing — which looks exactly like a bug in the extension.
+  canvas.job:
+    <<: *CANVAS
+    command: bundle exec script/delayed_job run
+    attach: false
+    ports: []
+
+  canvas.redis:
+    image: redis:alpine
+
+volumes:
+  canvasPostgresData: {}
+  api_docs: {}
+  brandable_css_brands: {}
+  bundler: {}
+  canvas-docker-gems: {}
+  js-utils_es: {}
+  js-utils_lib: {}
+  js-utils_node_modules: {}
+  locales: {}
+  log: {}
+  node_modules: {}
+  pacts: {}
+  public_dist: {}
+  reports: {}
+  styleguide: {}
+  tmp: {}
+  translations: {}
+  yardoc: {}
+  yarn-cache: {}

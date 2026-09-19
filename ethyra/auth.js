@@ -140,6 +140,60 @@ async function signIn(apiUrl, email, password) {
   return data.user || null;
 }
 
+/**
+ * Create an account, and land signed in.
+ *
+ * ── Why this can exist without a single WorkOS credential here ────────
+ *
+ * The extension never holds `WORKOS_API_KEY` or `WORKOS_CLIENT_ID`, and must
+ * never be changed so that it does. An extension bundle is world-readable —
+ * anyone can unpack a published `.crx` and read every file in it — so a secret
+ * shipped here is a secret published. The backend holds them and calls WorkOS
+ * server-side; this sends an email and a password to `/api/auth/sign-up` and
+ * gets tokens back, exactly as sign-in does.
+ *
+ * ── The backend signs the new user in for us ──────────────────────────
+ *
+ * `/api/auth/sign-up` creates the WorkOS user and then authenticates, returning
+ * the same body `/sign-in` does. So there is no second round trip and no window
+ * where an account exists that the student is not yet signed in to.
+ *
+ * Its failure modes are already worded for a person and are passed through
+ * untouched — including the one that matters most, where the account WAS
+ * created but the password did not register. That message routes them to
+ * Forgot password, which works on an account in that state, where "try signing
+ * up again" would dead-end on "already exists".
+ *
+ * ── `acceptTerms` is a parameter, never a default ─────────────────────
+ *
+ * The backend rejects a sign-up without it, and the honest reason is that it is
+ * consent: it must come from a control the student actually ticked. Defaulting
+ * it to `true` here would clear the check by asserting, on their behalf, a thing
+ * only they can say.
+ */
+async function signUp(apiUrl, { email, password, acceptTerms, firstName, lastName }) {
+  const res = await ethyraFetch(apiUrl, "/api/auth/sign-up", {
+    method: "POST",
+    body: JSON.stringify({
+      email,
+      password,
+      accept_terms: acceptTerms === true,
+      first_name: firstName || null,
+      last_name: lastName || null,
+    }),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.detail || data.message || `Sign-up failed (${res.status})`);
+
+  cacheAccessToken(data.access_token);
+  await writeSession({
+    apiUrl,
+    refreshToken: data.refresh_token || null,
+    user: data.user || null,
+  });
+  return data.user || null;
+}
+
 async function signOut(apiUrl) {
   const session = await readSession();
   try {

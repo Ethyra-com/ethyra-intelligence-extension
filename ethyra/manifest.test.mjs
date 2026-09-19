@@ -85,7 +85,11 @@ test("carries what a Canvas personal export cannot state", () => {
 
   assert.equal(m.manifest_version, 1);
   assert.equal(m.source, "extension");
-  assert.equal(m.student.name, "Miguel, Santi");
+  // The Canvas name is deliberately absent — the profile is labelled from the
+  // Ethyra account, which is the identity the student actually chose. The id
+  // stays because it scopes the export; nothing renders it.
+  assert.equal(m.student.canvas_user_id, "12345");
+  assert.ok(!("name" in m.student), "the Canvas name must not be in the manifest");
   assert.equal(course.course_code, "APWH-11");
   assert.equal(course.term, "Fall 2026");
   assert.equal(a.due_at, "2026-03-04T23:59:00.000Z");
