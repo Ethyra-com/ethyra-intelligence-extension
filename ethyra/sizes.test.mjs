@@ -29,14 +29,14 @@ const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 
 // `profile.js` first: `collect.js` reads its constants at call time.
 const sandbox = vm.createContext({ console, document: undefined });
-for (const file of ["ethyra/profile.js", "ethyra/manifest.js", "helpers.js", "ethyra/collect.js"]) {
+for (const file of ["ethyra/profile.js", "ethyra/manifest.js", "helpers.js", "ethyra/collect.js", "ethyra/archive.js"]) {
   vm.runInContext(readFileSync(join(ROOT, file), "utf8"), sandbox, { filename: file });
 }
 // `function` declarations land on the context object; top-level `const` does
 // not — it goes to the global LEXICAL scope, which scripts share with each other
 // but which is invisible from out here. So the caps are read by evaluating their
 // names, and destructuring them off `sandbox` would silently yield undefined.
-const { oversized, assignmentEntry } = sandbox;
+const { oversized, assignmentEntry, pruneFailed } = sandbox;
 const ETHYRA_MAX_FILE_BYTES = vm.runInContext("ETHYRA_MAX_FILE_BYTES", sandbox);
 const ETHYRA_MAX_TOTAL_BYTES = vm.runInContext("ETHYRA_MAX_TOTAL_BYTES", sandbox);
 
@@ -128,4 +128,31 @@ test("a submission under the cap is listed with its file", () => {
     [`${FOLDER}essay.pdf`]
   );
   assert.equal(withhold, false);
+});
+
+
+// ── A failed download does not take the gradebook rows with it ─────────────
+
+function manifestWith(...assignments) {
+  return { courses: [{ path: "English 10", assignments }] };
+}
+
+test("a failed file elsewhere keeps a gradebook row that never had files", () => {
+  const participation = { path: "English 10/Participation", files: [] };
+  const essay = { path: "English 10/Essay 1", files: [{ path: "English 10/Essay 1/a.pdf", role: "submission" }] };
+  const lost = { path: "English 10/Essay 2", files: [{ path: "English 10/Essay 2/b.pdf", role: "submission" }] };
+
+  const m = pruneFailed(manifestWith(participation, essay, lost), ["English 10/Essay 2/b.pdf"]);
+  assert.deepEqual(
+    m.courses[0].assignments.map((a) => a.path),
+    ["English 10/Participation", "English 10/Essay 1"]
+  );
+});
+
+test("a course left with only gradebook rows is dropped, as collect.js drops it", () => {
+  const participation = { path: "English 10/Participation", files: [] };
+  const lost = { path: "English 10/Essay 2", files: [{ path: "English 10/Essay 2/b.pdf", role: "submission" }] };
+
+  const m = pruneFailed(manifestWith(participation, lost), ["English 10/Essay 2/b.pdf"]);
+  assert.equal(m.courses.length, 0);
 });

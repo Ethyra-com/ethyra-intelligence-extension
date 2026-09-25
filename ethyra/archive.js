@@ -101,22 +101,28 @@ async function buildArchive(files, manifest, { signal, onProgress = () => {} } =
  * backend reports as missing files and drops — producing an assignment that
  * silently lost a submission. Better to state exactly what was uploaded.
  *
- * An assignment left with no submitted work is removed outright, and a course
- * left with no assignments after that goes too: both would cost an agent call
- * to be told there is nothing in them.
+ * An assignment whose submitted work all failed is removed outright, and a
+ * course left with no submitted work after that goes too: both would cost an
+ * agent call to be told there is nothing in them.
+ *
+ * A gradebook row listed with no files from the start is kept. Nothing of it
+ * failed — it never had files — and it is how the class window shows an item
+ * graded without a submission. `collect.js` already dropped a course of only
+ * such rows, and the course rule here is the same one.
  */
 function pruneFailed(manifest, failed) {
   if (!failed.length) return manifest;
   const gone = new Set(failed);
 
   for (const course of manifest.courses) {
+    const gradebookRows = new Set(course.assignments.filter((a) => a.files.length === 0));
     for (const assignment of course.assignments) {
       assignment.files = assignment.files.filter((f) => !gone.has(f.path));
     }
-    course.assignments = course.assignments.filter((a) =>
-      a.files.some((f) => f.role === ROLE_SUBMISSION)
+    course.assignments = course.assignments.filter(
+      (a) => gradebookRows.has(a) || a.files.some((f) => f.role === ROLE_SUBMISSION)
     );
   }
-  manifest.courses = manifest.courses.filter((c) => c.assignments.length);
+  manifest.courses = manifest.courses.filter((c) => c.assignments.some((a) => a.files.length));
   return manifest;
 }
