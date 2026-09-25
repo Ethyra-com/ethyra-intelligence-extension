@@ -801,7 +801,12 @@ async function downloadCourse(courseId, courseName, domain, onProgress, ethyra =
     const attempts = history.filter(
       (h) => h.submitted_at || (h.attachments && h.attachments.length) || h.body || h.url
     );
-    if (attempts.length === 0) return false;
+    if (attempts.length === 0) {
+      // Ethyra fork: nothing turned in, but the gradebook row is still real —
+      // its grade travels in the manifest beside a "No writing to read." note.
+      if (ethyra) ethyra.recordSubmission(a, s);
+      return false;
+    }
     const multi = attempts.length > 1;
     const attemptLabel = (h) => (multi ? `Attempt ${h.attempt || "?"} - ` : "");
 
@@ -976,7 +981,11 @@ async function downloadCourse(courseId, courseName, domain, onProgress, ethyra =
   if (!isTeacher && types.submissions && assignments.length > 0) {
     log("Fetching your submissions...");
     for (const a of assignments) {
-      if (!(a.submission_types || []).some((t) => ONLINE_SUBMISSION_TYPES.has(t))) continue;
+      // Ethyra fork: an item with no online submission (participation, an oral
+      // exam, work on paper) is still a gradebook row, so its submission is
+      // fetched for the grade alone. Nothing can be downloaded from it.
+      const online = (a.submission_types || []).some((t) => ONLINE_SUBMISSION_TYPES.has(t));
+      if (!online && !ethyra) continue;
       let s;
       try {
         const res = await fetchWithRetry(
@@ -1003,6 +1012,10 @@ async function downloadCourse(courseId, courseName, domain, onProgress, ethyra =
       // One archive now carries every course, so the course has to be in the
       // path — and the backend reads the first component as the course.
       const folder = ethyra ? ethyra.assignmentFolder(a) : `Submissions/${safeAssignment}/`;
+      if (!online) {
+        ethyra.recordSubmission(a, s);
+        continue;
+      }
       if (await renderSubmission(a, s, folder, studentName, "")) {
         studentSubmissionCount++;
       }

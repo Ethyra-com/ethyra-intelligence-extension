@@ -172,6 +172,9 @@ async function collectExport({ origin, extensionVersion, onProgress = () => {} }
     warnings.push(...recorder.warnings);
 
     const manifestAssignments = [];
+    // Folders of gradebook items with nothing turned in. Their teacher files
+    // are left out on purpose, so they are not reported as unclaimed below.
+    const withheld = new Set();
     for (const [folder, { assignment, submission }] of recorder.assignments) {
       // Read back, not predicted — see the module docstring.
       //
@@ -186,22 +189,27 @@ async function collectExport({ origin, extensionVersion, onProgress = () => {} }
         ...(f.attempt != null ? { attempt: f.attempt } : {}),
       }));
 
-      // Nothing of the student's here — an assignment with instructions they
-      // never submitted to. Real, and not evidence about them: the backend would
-      // enrol it in a run and spend an agent call to be told it is empty.
-      if (!manifestFiles.some((f) => f.role === ROLE_SUBMISSION)) continue;
+      // Nothing of the student's here — an assignment they never submitted to,
+      // or one graded without a submission (participation, an oral exam). Sent
+      // as a gradebook row with no files: its date and grade show on the class
+      // window, and the backend skips it without an agent call. The teacher's
+      // attachments stay behind — with no work beside them they are not
+      // evidence about anybody.
+      const turnedIn = manifestFiles.some((f) => f.role === ROLE_SUBMISSION);
+      if (!turnedIn) withheld.add(folder);
 
       manifestAssignments.push(
         manifestAssignment({
           assignment,
           submission,
           path: folder.replace(/\/$/, ""),
-          files: manifestFiles,
+          files: turnedIn ? manifestFiles : [],
         })
       );
     }
 
-    if (!manifestAssignments.length) {
+    // A course with nothing turned in anywhere is not evidence about anybody.
+    if (!manifestAssignments.some((a) => a.files.length)) {
       warnings.push(`No submitted work found in ${course.name}.`);
       continue;
     }
@@ -222,7 +230,7 @@ async function collectExport({ origin, extensionVersion, onProgress = () => {} }
     for (const f of courseFiles) {
       const path = `${f.path}${f.filename}`;
       if (claimed.has(path)) files.push(f);
-      else unclaimed.push(path);
+      else if (!withheld.has(f.path)) unclaimed.push(path);
     }
     if (unclaimed.length) {
       console.warn(`[Ethyra] ${course.name}: not uploading ${unclaimed.length} unclaimed file(s)`, unclaimed);

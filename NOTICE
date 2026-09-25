@@ -88,12 +88,14 @@ What is read:
     rubric definitions                 the criteria, not how anyone was marked
     instruction attachments            files linked from those instructions
     dates                              due date and submission date
+    the student's own marks            score, letter grade, points possible,
+                                       per gradebook item — shown on the class
+                                       window, never put in a prompt
     course identity                    name, code and term; the student's name
 
 What is not read — enforced at the Canvas request rather than by a filter
 afterwards, so no later change can forget it:
 
-    grades                             score, letter grade, points possible
     instructor comments                the feedback thread on a submission
     rubric marks                       how an instructor scored the student
     class statistics                   mean, median and quartiles

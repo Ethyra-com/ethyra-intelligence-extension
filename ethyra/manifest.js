@@ -23,23 +23,26 @@
  * downstream can distinguish that from a correct reading. Without a stated role
  * the backend falls back to guessing from the filename.
  *
- * ── What this deliberately does not carry ─────────────────────────────
+ * ── The marks, and what still stays behind ────────────────────────────
  *
- * **No marks.** Not `score`, not `grade`, not `points_possible`, not the class
- * `score_statistics`, not the instructor's comment thread. The product measures
- * what a student's work demonstrates against ACT standards; a teacher's mark is
- * a different judgement made against a different rubric, and collecting it is
- * collecting more of a student's record than the analysis needs.
+ * The item's own mark travels: `points_possible`, `score` and `grade`. The
+ * class window shows each gradebook item with its grade beside what the work
+ * shows, and the student sees those grades in Canvas already. The backend
+ * stores them and never puts one in a prompt — a model shown the mark
+ * reconciles its reading to it.
  *
- * Worth knowing what that costs: the backend's proficiency levels are
- * uncalibrated and run about a level and a half low, and teacher marks were the
- * only ground truth available to measure that against. The ordering is
- * unaffected — which is what the graph and "what to master next" depend on —
- * and the absolute level stays uncalibrated and labelled as such.
+ * Still not carried: the class `score_statistics`, the rubric assessment and
+ * the instructor's comment thread. Those are other people's judgements about
+ * the work, not facts about the gradebook item.
  *
- * `due_at` and `submitted_at` are kept. They are dates rather than judgements,
- * and they are what lets the backend order a student's work by when it was due
- * instead of by a filename heuristic.
+ * `due_at` and `submitted_at` are kept. They are what lets the backend order a
+ * student's work by when it was due instead of by a filename heuristic.
+ *
+ * ── An item with nothing turned in ────────────────────────────────────
+ *
+ * Listed with `files: []`. It is a gradebook row — its date and grade show on
+ * the class window as "No writing to read." — and the backend settles it
+ * without an agent call.
  *
  * ── Shape rules the backend enforces ──────────────────────────────────
  *
@@ -162,6 +165,11 @@ function manifestAssignment({ assignment, submission, path, files }) {
     due_at: timestamp(assignment.due_at),
     submitted_at: timestamp(submission?.submitted_at),
     submission_type: text(submission?.submission_type, 64),
+    // The item's own mark, shown beside the work and never prompted. Null when
+    // ungraded or not yet posted — Canvas withholds an unposted score.
+    points_possible: number(assignment.points_possible),
+    score: number(submission?.score),
+    grade: text(submission?.grade, 32),
     files,
   };
 }
@@ -261,7 +269,9 @@ function validateManifest(manifest, archivePaths) {
       }
       // An assignment of nothing but the teacher's materials is not evidence
       // about the student, and the backend would spend an agent call to say so.
-      if (submissions === 0) {
+      // Listed with no files at all is different: a gradebook item with nothing
+      // turned in, which the backend keeps for its date and grade.
+      if (submissions === 0 && (assignment.files || []).length > 0) {
         problems.push(`Assignment ${JSON.stringify(assignmentPath)} has no submitted work`);
       }
     }

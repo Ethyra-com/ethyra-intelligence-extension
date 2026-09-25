@@ -116,6 +116,26 @@ placeholders — the version bump is the one thing a store submission cannot ski
   This is a divergence from production worth remembering: the expiring-verifier
   failure mode is one thing local Canvas will *not* reproduce.
 
+## Demo classes
+
+```bash
+node dev/seed-coldwar.mjs
+```
+
+Signs in as `cw101@example.com` / `password123` (Ava Reyes): **Cold War
+History** (ten graded papers with handouts, fourteen classmates) and **English
+10** (ten graded essays from `~/Downloads/student_submissions/english`, plus a
+participation grade with nothing turned in). This is the one to demo with.
+
+```bash
+node dev/seed-demo.mjs
+```
+
+One student (`demo@example.com` / `password123`) in two ordinary classes,
+English 11 and Chemistry, with real writing, due dates, grades and comments,
+plus gradebook items with nothing turned in. Built for walking through the
+product end to end: export, the ACT profile, and a class window per course.
+
 ## Fixtures
 
 ```bash

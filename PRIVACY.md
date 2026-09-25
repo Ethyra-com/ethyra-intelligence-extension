@@ -32,6 +32,10 @@ site you are signed in to, for every course you are actively enrolled in:
 - the rubric attached to an assignment, if there is one
 - files the instructor attached to those instructions
 - the assignment's due date, and when you submitted
+- your grade on each assignment: the score, the letter grade and the points it
+  was worth — including items you turned nothing in for, such as participation.
+  They are shown beside your work on each class's page and are never given to
+  the AI that reads your work
 
 **About the course**
 
@@ -45,8 +49,6 @@ and does not. These are not filtered out after the fact — they are never
 requested from Canvas at all, which is the only version of this claim that
 cannot be undone by a bug.
 
-- **No grades.** Not your score, not your letter grade, not the points an
-  assignment was worth.
 - **No instructor feedback.** Comments left on your submissions are not read.
 - **No rubric marks.** How an instructor scored you against each criterion is
   not read.

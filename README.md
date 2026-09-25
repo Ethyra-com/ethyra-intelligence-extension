@@ -33,11 +33,12 @@ mergeable. `NOTICE` records what changed and what is deliberately left unloaded.
 
 | Collected | Not collected |
 |---|---|
-| Files you submitted, every attempt | Grades, scores, points possible |
-| Text you typed into Canvas | Instructor comments and rubric marks |
-| Assignment instructions, verbatim | Class averages and medians |
-| Rubrics, and files attached to instructions | Course files, pages, modules, quizzes, discussions |
-| Due dates and submission dates | Anything belonging to another student |
+| Files you submitted, every attempt | Instructor comments and rubric marks |
+| Text you typed into Canvas | Class averages and medians |
+| Assignment instructions, verbatim | Course files, pages, modules, quizzes, discussions |
+| Rubrics, and files attached to instructions | Anything belonging to another student |
+| Due dates and submission dates | |
+| Your grade on each gradebook item | |
 
 The exclusions are enforced at the **request**, not by a filter afterwards —
 `score_statistics`, `submission_comments` and `rubric_assessment` are never asked
