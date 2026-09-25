@@ -34,8 +34,10 @@ site you are signed in to, for every course you are actively enrolled in:
 - the assignment's due date, and when you submitted
 - your grade on each assignment: the score, the letter grade and the points it
   was worth — including items you turned nothing in for, such as participation.
-  They are shown beside your work on each class's page and are never given to
-  the AI that reads your work
+  They are sent only for a course where you turned in at least one piece of
+  work; a course with nothing of yours in it is skipped entirely, grades
+  included. They are shown beside your work on each class's page and are never
+  given to the AI that reads your work
 
 **About the course**
 

@@ -176,36 +176,9 @@ async function collectExport({ origin, extensionVersion, onProgress = () => {} }
     // are left out on purpose, so they are not reported as unclaimed below.
     const withheld = new Set();
     for (const [folder, { assignment, submission }] of recorder.assignments) {
-      // Read back, not predicted — see the module docstring.
-      //
-      // The per-file cap is applied HERE, while the manifest entry is being
-      // built, so a dropped file leaves neither an archive entry nor a manifest
-      // line. Dropping it afterwards would leave the manifest pointing at bytes
-      // that were never uploaded, which the backend reports as a missing file.
-      const own = courseFiles.filter((f) => f.path === folder && !oversized(f, warnings));
-      const manifestFiles = own.map((f) => ({
-        path: `${f.path}${f.filename}`,
-        role: f.role || ROLE_SUBMISSION,
-        ...(f.attempt != null ? { attempt: f.attempt } : {}),
-      }));
-
-      // Nothing of the student's here — an assignment they never submitted to,
-      // or one graded without a submission (participation, an oral exam). Sent
-      // as a gradebook row with no files: its date and grade show on the class
-      // window, and the backend skips it without an agent call. The teacher's
-      // attachments stay behind — with no work beside them they are not
-      // evidence about anybody.
-      const turnedIn = manifestFiles.some((f) => f.role === ROLE_SUBMISSION);
-      if (!turnedIn) withheld.add(folder);
-
-      manifestAssignments.push(
-        manifestAssignment({
-          assignment,
-          submission,
-          path: folder.replace(/\/$/, ""),
-          files: turnedIn ? manifestFiles : [],
-        })
-      );
+      const { entry, withhold } = assignmentEntry({ folder, assignment, submission, courseFiles, warnings });
+      if (withhold) withheld.add(folder);
+      if (entry) manifestAssignments.push(entry);
     }
 
     // A course with nothing turned in anywhere is not evidence about anybody.
@@ -296,6 +269,46 @@ async function collectExport({ origin, extensionVersion, onProgress = () => {} }
  * their entire export, and the warning travels with the upload so the omission
  * is visible rather than silent.
  */
+/**
+ * One recorded assignment's manifest entry, or none, and whether its remaining
+ * files are left out on purpose (so not reported as unclaimed).
+ *
+ * Read back, not predicted — see the module docstring. The per-file cap is
+ * applied HERE, while the entry is built, so a dropped file leaves neither an
+ * archive entry nor a manifest line. Dropping it afterwards would leave the
+ * manifest pointing at bytes that were never uploaded, which the backend
+ * reports as a missing file.
+ */
+function assignmentEntry({ folder, assignment, submission, courseFiles, warnings }) {
+  const inFolder = courseFiles.filter((f) => f.path === folder);
+  const submitted = inFolder.some((f) => (f.role || ROLE_SUBMISSION) === ROLE_SUBMISSION);
+  const own = inFolder.filter((f) => !oversized(f, warnings));
+  const manifestFiles = own.map((f) => ({
+    path: `${f.path}${f.filename}`,
+    role: f.role || ROLE_SUBMISSION,
+    ...(f.attempt != null ? { attempt: f.attempt } : {}),
+  }));
+  const turnedIn = manifestFiles.some((f) => f.role === ROLE_SUBMISSION);
+  const path = folder.replace(/\/$/, "");
+
+  if (turnedIn) {
+    return { entry: manifestAssignment({ assignment, submission, path, files: manifestFiles }), withhold: false };
+  }
+
+  // The student DID submit, but every file was over the per-file cap and
+  // `oversized` has already said so. Not listed at all: a gradebook row with
+  // `files: []` would tell the class window "No writing to read" about work
+  // that exists and was only too large to send.
+  if (submitted) return { entry: null, withhold: true };
+
+  // Nothing of the student's here — an assignment they never submitted to, or
+  // one graded without a submission (participation, an oral exam). Sent as a
+  // gradebook row with no files: its date and grade show on the class window,
+  // and the backend skips it without an agent call. The teacher's attachments
+  // stay behind — with no work beside them they are not evidence about anybody.
+  return { entry: manifestAssignment({ assignment, submission, path, files: [] }), withhold: true };
+}
+
 function oversized(file, warnings) {
   if ((file.size || 0) <= ETHYRA_MAX_FILE_BYTES) return false;
   warnings.push(`Skipped ${file.filename} — larger than the 50 MB per-file limit.`);

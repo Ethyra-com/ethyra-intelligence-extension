@@ -89,8 +89,10 @@ What is read:
     instruction attachments            files linked from those instructions
     dates                              due date and submission date
     the student's own marks            score, letter grade, points possible,
-                                       per gradebook item — shown on the class
-                                       window, never put in a prompt
+                                       per gradebook item, sent only for a
+                                       course with at least one submission —
+                                       shown on the class window, never put in
+                                       a prompt
     course identity                    name, code and term; the student's name
 
 What is not read — enforced at the Canvas request rather than by a filter

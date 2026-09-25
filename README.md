@@ -38,7 +38,7 @@ mergeable. `NOTICE` records what changed and what is deliberately left unloaded.
 | Assignment instructions, verbatim | Course files, pages, modules, quizzes, discussions |
 | Rubrics, and files attached to instructions | Anything belonging to another student |
 | Due dates and submission dates | |
-| Your grade on each gradebook item | |
+| Your grade on each gradebook item, in courses you submitted work to | |
 
 The exclusions are enforced at the **request**, not by a filter afterwards —
 `score_statistics`, `submission_comments` and `rubric_assessment` are never asked

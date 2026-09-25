@@ -182,7 +182,7 @@ in our favour, silently.
 | Text-entry assignment with an embedded image | the rich-text case the unclaimed-file warning was added for |
 | One assignment submitted twice | `submission_history`, the `attempt` field |
 | Rubric + a file attached to the description | `linkedFiles`, teacher-attachment role |
-| Assignment with instructions, never submitted | the skip in `collect.js` — must not reach the manifest |
+| Assignment with instructions, never submitted | a gradebook row in `collect.js` — listed in the manifest with `files: []`, its instructions left behind |
 | Two assignments sharing their first 80 characters | the truncation collision `collect.js` documents at length |
 | A teacher comment on a submission | the comment thread capture |
 | A course where the test user is the teacher | the `ETHYRA_NOT_A_STUDENT` skip, and its warning |
