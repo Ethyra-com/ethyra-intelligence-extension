@@ -1,8 +1,12 @@
 /**
  * Import the Cold War Seminar folder into the local Canvas as a real course.
  *
- * Run:  node dev/seed-coldwar.mjs [path-to-folder]
- * Default path: ~/Downloads/Cold_War_Seminar
+ * Run:  node dev/seed-coldwar.mjs [path-to-folder] [path-to-english-folder]
+ * Default paths: ~/Downloads/Cold_War_Seminar, ~/Downloads/student_submissions/english
+ *
+ * Also gives the primary student (cw101, Ava Reyes) a second class, English 10,
+ * from the English essays — see `seedEnglish`. To add only that to a Canvas
+ * already seeded with the Cold War course:  ENGLISH_ONLY=1 node dev/seed-coldwar.mjs
  *
  * ── What this is, and why it is a better fixture than seed.mjs ────────
  *
@@ -50,6 +54,27 @@ import {
 
 const ROOT = process.argv[2] || join(homedir(), "Downloads", "Cold_War_Seminar");
 const COURSE_NAME = "Cold War History";
+
+// ── The same student's second class ─────────────────────────────────────────
+//
+// A class window is per course, so the demo needs more than one. English is the
+// primary student's alone — ten essays, no classmates — dated and graded, with
+// one gradebook item nothing was turned in for. The essays' own headers name a
+// different student; nothing reads them for identity.
+const ENGLISH_ROOT = process.argv[3] || join(homedir(), "Downloads", "student_submissions", "english");
+const ENGLISH_COURSE = { name: "English 10", code: "ENG-10" };
+const ENGLISH_ESSAYS = [
+  ["English_Essay_01.pdf", "The Green Light: Hope and Illusion in The Great Gatsby", "2026-09-08", 88],
+  ["English_Essay_02.pdf", "Courage in To Kill a Mockingbird", "2026-09-11", 85],
+  ["English_Essay_03.pdf", "Loneliness in Of Mice and Men", "2026-09-14", 90],
+  ["English_Essay_04.pdf", "Ambition and Guilt in Macbeth", "2026-09-17", 83],
+  ["English_Essay_05.pdf", "Civilization and Savagery in Lord of the Flies", "2026-09-20", 91],
+  ["English_Essay_06.pdf", "Who Is to Blame in Romeo and Juliet?", "2026-09-23", 87],
+  ["English_Essay_07.pdf", "Mass Hysteria in The Crucible", "2026-09-26", 92],
+  ["English_Essay_08.pdf", "Censorship and Technology in Fahrenheit 451", "2026-09-29", 89],
+  ["English_Essay_09.pdf", "Personal Narrative: The Summer I Learned to Fail", "2026-10-02", 94],
+  ["English_Essay_10.pdf", "The Hero's Journey in The Odyssey", "2026-10-05", 93],
+];
 
 /** The student whose credentials get printed — the one you sign in as. */
 const PRIMARY_ID = "101";
@@ -100,6 +125,17 @@ const numberFromDir = (dir) => String(Number((dir.match(/^Assignment_(\d+)/) || 
 
 async function main() {
   console.log(`Canvas: ${CANVAS}`);
+
+  // English alone, onto a Canvas that already holds the Cold War course. The
+  // Cold War half is not idempotent for submissions — a re-run makes every
+  // paper a second attempt — so adding English must not re-run it.
+  if (process.env.ENGLISH_ONLY === "1") {
+    const primary = await findOrCreateUser({ login: `cw${PRIMARY_ID}@example.com`, name: "Ava Reyes" });
+    await seedEnglish(primary);
+    console.log(`\nDone. Sign in as cw${PRIMARY_ID}@example.com / password123.`);
+    return;
+  }
+
   console.log(`Source: ${ROOT}\n`);
 
   const key = parseCSV(await readFile(join(ROOT, "_grading_key.csv"), "utf8"));
@@ -224,6 +260,8 @@ async function main() {
   });
 
   const primary = students.get(PRIMARY_ID);
+  if (primary) await seedEnglish(primary);
+
   console.log(`
 Done — ${done} submitted${failed ? `, ${failed} failed` : ""}.
 
@@ -234,7 +272,54 @@ Exporting as that account should produce, for ${COURSE_NAME}:
   - ${titles.size} assignments, each with a score and the teacher's handout
   - exactly ${rows.filter((r) => r.student_id === PRIMARY_ID).length} submitted files — one per assignment
   - NOTHING belonging to the other ${students.size - 1} students in the course
+and for ${ENGLISH_COURSE.name}:
+  - ${ENGLISH_ESSAYS.length} graded essays, and one participation grade with no files
 `);
+}
+
+/**
+ * English, for the primary student only. Idempotent: an essay already
+ * submitted is not submitted again, which would make it a second attempt.
+ */
+async function seedEnglish(student) {
+  const course = await findOrCreateCourse(ENGLISH_COURSE.name);
+  await api(`/courses/${course.id}`, { method: "PUT", form: { "course[course_code]": ENGLISH_COURSE.code } });
+  await enrol(course.id, student.id, "StudentEnrollment");
+  console.log(`\nCourse: ${course.name} (id ${course.id}) — ${student.name} only`);
+
+  for (const [file, title, due, score] of ENGLISH_ESSAYS) {
+    const a = await findOrCreateAssignment(course.id, {
+      name: title,
+      description: `<p>Write a literary analysis essay: ${title}. 500–700 words, MLA format.</p>`,
+      points: 100,
+      dueAt: `${due}T23:59:00Z`,
+    });
+    const existing = await api(`/courses/${course.id}/assignments/${a.id}/submissions/${student.id}`);
+    if (!existing?.submitted_at) {
+      const uploaded = await uploadFile({
+        name: file,
+        contentType: contentTypeFor(file),
+        bytes: await readFile(join(ENGLISH_ROOT, file)),
+        as: student.id,
+      });
+      await submit(course.id, a.id, student.id, {
+        "submission[submission_type]": "online_upload",
+        "submission[file_ids][]": uploaded.id,
+      });
+    }
+    await gradeAndComment(course.id, a.id, student.id, { grade: score });
+    console.log(`  ✓ ${title} — ${score} / 100`);
+  }
+
+  // Graded, nothing turned in: the class window lists it as "No writing to read."
+  const participation = await findOrCreateAssignment(course.id, {
+    name: "Class Participation",
+    submissionTypes: ["none"],
+    points: 20,
+    dueAt: "2026-09-30T23:59:00Z",
+  });
+  await gradeAndComment(course.id, participation.id, student.id, { grade: 18 });
+  console.log(`  ✓ Class Participation — 18 / 20, nothing turned in`);
 }
 
 main().catch((err) => {

@@ -116,6 +116,26 @@ placeholders — the version bump is the one thing a store submission cannot ski
   This is a divergence from production worth remembering: the expiring-verifier
   failure mode is one thing local Canvas will *not* reproduce.
 
+## Demo classes
+
+```bash
+node dev/seed-coldwar.mjs
+```
+
+Signs in as `cw101@example.com` / `password123` (Ava Reyes): **Cold War
+History** (ten graded papers with handouts, fourteen classmates) and **English
+10** (ten graded essays from `~/Downloads/student_submissions/english`, plus a
+participation grade with nothing turned in). This is the one to demo with.
+
+```bash
+node dev/seed-demo.mjs
+```
+
+One student (`demo@example.com` / `password123`) in two ordinary classes,
+English 11 and Chemistry, with real writing, due dates, grades and comments,
+plus gradebook items with nothing turned in. Built for walking through the
+product end to end: export, the ACT profile, and a class window per course.
+
 ## Fixtures
 
 ```bash
@@ -162,7 +182,7 @@ in our favour, silently.
 | Text-entry assignment with an embedded image | the rich-text case the unclaimed-file warning was added for |
 | One assignment submitted twice | `submission_history`, the `attempt` field |
 | Rubric + a file attached to the description | `linkedFiles`, teacher-attachment role |
-| Assignment with instructions, never submitted | the skip in `collect.js` — must not reach the manifest |
+| Assignment with instructions, never submitted | a gradebook row in `collect.js` — listed in the manifest with `files: []`, its instructions left behind |
 | Two assignments sharing their first 80 characters | the truncation collision `collect.js` documents at length |
 | A teacher comment on a submission | the comment thread capture |
 | A course where the test user is the teacher | the `ETHYRA_NOT_A_STUDENT` skip, and its warning |

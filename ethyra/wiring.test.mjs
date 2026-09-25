@@ -1215,7 +1215,9 @@ test("the disclosures do not claim to collect what the code refuses to ask for",
   // grades and comments at length in order to say they are excluded, and a test
   // that could not tell "we collect X" from "we do not collect X" would force
   // the documents to stop being clear in order to stay green.
-  const NEVER_COLLECTED = [/\bgrades?\b/i, /instructor comments/i, /rubric marks/i, /class (averages|statistics)/i];
+  // The student's own marks are collected now, for the class window, so
+  // "grades" is no longer on this list; other people's judgements still are.
+  const NEVER_COLLECTED = [/instructor comments/i, /rubric marks/i, /class (averages|statistics)/i];
 
   const notice = readFileSync(join(ROOT, "NOTICE"), "utf8");
   const start = notice.indexOf("What is read:");
@@ -1249,9 +1251,10 @@ test("nothing asks Canvas for marks", () => {
       );
     }
   }
-  // And the manifest builder has no field for any of them.
+  // And the manifest builder has no field for them. The item's own mark —
+  // score, grade, points_possible — does travel, for the class window.
   const builder = read("ethyra/manifest.js");
-  for (const field of ["score:", "grade:", "points_possible:", "score_statistics:", "teacher_comments:"]) {
+  for (const field of ["score_statistics:", "teacher_comments:"]) {
     assert.ok(!builder.includes(field), `manifest.js still emits ${field}`);
   }
 });

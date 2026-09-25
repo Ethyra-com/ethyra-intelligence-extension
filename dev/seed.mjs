@@ -148,7 +148,8 @@ async function main() {
     console.log(`  ✓ ${title.slice(0, 50)}… (id ${a.id}) — collision fixture`);
   }
 
-  // Instructions with no submission. Must not reach the manifest at all.
+  // Instructions with no submission. Listed in the manifest with no files, as a
+  // gradebook row the class window shows as "No writing to read."
   const unsubmitted = await findOrCreateAssignment(english.id, {
     name: "Unsubmitted Reflection",
     description: "<p>A reflection the student never turned in.</p>",
@@ -244,7 +245,7 @@ Done.
 Sign in as the STUDENT, then run the export. Expect:
   - two courses in the manifest, not three
   - "Peer Tutoring Seminar" skipped with a not-a-student warning
-  - "Unsubmitted Reflection" absent entirely
+  - "Unsubmitted Reflection" listed with no files
   - "Proof Set 1" carrying two attempts
   - the two Research Paper Draft folders distinct, each ending in its Canvas id
 `);

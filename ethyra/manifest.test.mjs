@@ -98,27 +98,32 @@ test("carries what a Canvas personal export cannot state", () => {
   assert.equal(a.rubric[0].description, "Thesis");
 });
 
-test("carries NO marks, even when Canvas hands them over", () => {
-  // The fixtures above include score, grade, points_possible, the class
-  // statistics and the instructor's comment thread. None of it may survive: the
-  // product measures what the work demonstrates against ACT standards, and a
-  // teacher's mark is a different judgement against a different rubric.
+test("carries the item's own mark, and nobody else's judgement", () => {
+  // The class window shows each gradebook item's grade beside the work. The
+  // class statistics, the rubric assessment and the instructor's comment thread
+  // are other people's judgements and still stay behind.
   const a = build().courses[0].assignments[0];
-  for (const field of [
-    "score",
-    "grade",
-    "points_possible",
-    "score_statistics",
-    "teacher_comments",
-    "rubric_assessment",
-  ]) {
+  assert.equal(a.score, 88);
+  assert.equal(a.grade, "B+");
+  assert.equal(a.points_possible, 100);
+  for (const field of ["score_statistics", "teacher_comments", "rubric_assessment"]) {
     assert.equal(a[field], undefined, `${field} must not reach the manifest`);
   }
-  // And nowhere else in the document either.
   const serialised = JSON.stringify(build());
-  assert.ok(!serialised.includes("B+"), "a grade leaked into the manifest");
   assert.ok(!serialised.includes("Ms Harper"), "an instructor comment leaked into the manifest");
   assert.ok(!serialised.includes("81.2"), "a class statistic leaked into the manifest");
+});
+
+test("an ungraded item carries null marks, never a zero", () => {
+  const a = build({ submission: { submitted_at: null, score: null, grade: null } }).courses[0].assignments[0];
+  assert.equal(a.score, null);
+  assert.equal(a.grade, null);
+});
+
+test("a gradebook item with nothing turned in validates with no files", () => {
+  const m = build({ files: [] });
+  assert.deepEqual(m.courses[0].assignments[0].files, []);
+  assert.deepEqual(validateManifest(m, new Set([MANIFEST_NAME])), []);
 });
 
 test("ids are strings — Canvas sends them both ways depending on the Accept header", () => {
