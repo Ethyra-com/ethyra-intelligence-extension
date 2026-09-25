@@ -18,7 +18,8 @@
     "*://*.instructure.com/*",
     "*://*.canvas-user-content.com/*",
     "https://api.ethyra.com/*",
-    "http://localhost:8001/*"
+    "http://localhost:8001/*",
+    "https://intelligence-backend-auayd3djbbdnhzaj.eastus-01.azurewebsites.net/*"
   ],
   "declarative_net_request": {
     "rule_resources": [
