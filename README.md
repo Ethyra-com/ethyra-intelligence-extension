@@ -5,7 +5,7 @@ A Chrome extension that sends a student's own Canvas coursework to
 College and Career Readiness Standards to build a learning profile.
 
 Sign in, click **Export**, done. There is no course picker, no settings, and no
-file to save — every active course goes, every time.
+file to save — every course, current and past, goes every time.
 
 > **Status: pre-release.** Never run against a real Canvas account.
 > See [Before this is usable](#before-this-is-usable).
@@ -60,9 +60,9 @@ popup            sign in, press Export, watch progress
        │                session cookie is
        │
        ├─ downloader.js  upstream's collector, in Ethyra mode
-       ├─ collect.js     records structured metadata as it goes past
-       ├─ archive.js     one streamed zip across every course
-       └─ upload.js      POST /api/act/uploads
+       ├─ collect.js     records structured metadata; sends each course as it goes
+       ├─ upload.js      per course: hash → /files → PUT new files; then /complete
+       └─ archive.js     one zip in one request, only for a backend without /files
 ```
 
 Four decisions worth knowing before changing anything:
@@ -77,15 +77,29 @@ to support — so the declaration is gone and the popup injects into one tab und
 `content.js` sets a flag so a second popup open cannot re-inject: these files
 declare top-level `const`s, and evaluating them twice is a `SyntaxError`.
 
-**One archive, not one per course.** An upload is a snapshot in a series on the
-Ethyra side — six separate uploads would read as six months of progress, start
-six analysis runs, and consume six units of a monthly quota whose free tier is
-two.
+**One upload, not one per course.** Files go up course by course, but the
+export ends in a single `/complete` with one manifest for every course. An
+upload is a snapshot in a series on the Ethyra side — six separate uploads would
+read as six months of progress, start six analysis runs, and consume six units
+of a monthly quota whose free tier is two.
 
-**The manifest is written last.** It has to describe the archive it is inside,
-and which files survived cannot be known until they have all been tried — a
-Canvas attachment URL carries a time-limited verifier, and one expiring
-mid-export is ordinary.
+**The manifest is sent last.** It has to name only files that arrived, and which
+ones did cannot be known until they have all been tried — a Canvas attachment
+URL carries a time-limited verifier, and one expiring mid-export is ordinary. A
+file that could not be fetched is dropped from its course's entry before
+`/complete`.
+
+**Each file goes straight to blob storage, once.** A student with every past
+course has 1-2 GB of work, most of it sent last time. As each course is
+collected, its files are fetched a few at a time, hashed (SHA-256), and
+`POST /api/act/uploads/files` answers with a create-only URL for each file this
+student has never sent; only those are PUT. `POST /api/act/uploads/complete`
+then sends the manifest, every file named by its hash. Files live in the
+student's own store (`{user}/files/{sha256}`), so a re-export sends almost
+nothing. A backend without `/files` is detected by the first `/files` request,
+before anything is sent, and gets one zip in one request instead, capped at
+500 MB. Only that first request decides it: a later failure is retried, then
+reported.
 
 **Manifest paths are read back, never predicted.** Upstream truncates filenames
 for Windows path limits and appends ` (2)` on collision, both after collection
@@ -148,6 +162,15 @@ No dependencies and no browser. Two suites:
       which is stored keyed on content hash, shared across users by design, and
       carries no user id. Both change what the policy has to say, and one may be
       a bug rather than a disclosure.
+- [ ] **Storage account set up for direct upload** (`ethyraintelligence`):
+      a CORS rule letting any origin `PUT`/`OPTIONS` with headers
+      `x-ms-blob-type` and `content-type` (schools run Canvas on their own
+      domains, and the signed URL is what authorises the write), and
+      **Storage Blob Delegator** at account scope for the backend's managed
+      identity, which signs the URL with a user delegation key. Its existing
+      Blob Data Contributor is scoped to one container, which cannot request
+      that key. Without the role, `/files` answers 501 and the export falls back
+      to one zip (500 MB cap); without CORS, the PUTs fail.
 - [ ] **Backend must be deployed** with the `CANVAS_ORIGINS` and `X-Client`
       changes from the `chrome-extension` branch, or sign-in succeeds and the
       first token refresh fails.
@@ -163,10 +186,20 @@ inherent to where the Canvas session cookie lives.
 may have outlived several popups, and a half-cancelled export that still uploads
 would be worse than no cancel at all.
 
-**500 MB ceiling**, matching the backend. Files over 50 MB are skipped
-individually with a warning; an export over the total refuses rather than
-silently trimming, because dropping work to fit under a limit produces a
-learning graph missing assignments nobody was told about.
+**Size limits.** Files over 50 MB are skipped individually with a warning. Past
+that, the export never trims work to fit — dropping assignments to get under a
+limit produces a learning graph missing work nobody was told about — so over a
+limit it stops and says so:
+
+- **Per-file upload: 10 GB** across the export (`ETHYRA_MAX_TOTAL_BYTES`,
+  matching the backend's `MAX_DIRECT_UPLOAD_BYTES`). Checked before each batch
+  is sent, so an export over it stops partway with at most 10 GB stored. Files
+  already sent stay in the student's store and are skipped by the next export;
+  nothing expires them yet (see "Before this is usable").
+- **One-zip fallback: 500 MB** (`ETHYRA_MAX_ZIP_BYTES`, matching the backend's
+  `MAX_UPLOAD_BYTES`). Checked on Canvas's sizes before anything is fetched and
+  again on the real bytes while the zip is built. Nothing is uploaded when it is
+  over.
 
 ## Licence
 

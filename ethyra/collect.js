@@ -114,11 +114,15 @@ function createRecorder(course) {
 }
 
 /**
- * Collect every active course into one archive's worth of files and one manifest.
+ * Collect every course, current and past, into one archive's worth of files and
+ * one manifest.
  *
  * ── There is nothing to choose ────────────────────────────────────────
  *
- * Every active enrolment, every time. No course picker, and the student is not
+ * Every enrolment, current and past, every time. Past courses count because the
+ * profile is cumulative: a student's Algebra 2 from two years ago is evidence
+ * about the same ACT standards as this term's work, and a senior's current
+ * courses are often the thinnest they have. No course picker, and the student is not
  * handed a zip to inspect first — Export means export.
  *
  * That is the same reasoning the backend's upload route already follows for a
@@ -131,13 +135,50 @@ function createRecorder(course) {
  * entries — `{ url, filename, path, size, role, attempt }` — ready to stream
  * into a single zip.
  */
-async function collectExport({ origin, extensionVersion, onProgress = () => {} }) {
+/**
+ * Print the export's size to the console, per course and in total, before the
+ * cap is checked — so an export that is refused for size still says how big it
+ * was. Sizes are what Canvas reported; a file it reported no size for counts as
+ * zero here, and `archive.js` logs the real zip size once it is built.
+ */
+function logExportSize(files, totalBytes) {
+  const mb = (bytes) => Math.round((bytes / (1024 * 1024)) * 10) / 10;
+  const byCourse = new Map();
+  for (const f of files) {
+    const course = f.path.split("/")[0];
+    const row = byCourse.get(course) || { files: 0, bytes: 0, unsized: 0 };
+    row.files++;
+    row.bytes += f.size || 0;
+    if (!f.size) row.unsized++;
+    byCourse.set(course, row);
+  }
+  const rows = [...byCourse].sort((a, b) => b[1].bytes - a[1].bytes);
+  console.table(
+    Object.fromEntries(rows.map(([course, r]) => [course, { files: r.files, MB: mb(r.bytes), "no size": r.unsized }]))
+  );
+  console.info(
+    `[Ethyra] Export: ${files.length} files, ~${mb(totalBytes)} MB before zipping ` +
+      `(limit ${mb(ETHYRA_MAX_TOTAL_BYTES)} MB).`
+  );
+}
+
+async function collectExport({ origin, extensionVersion, onProgress = () => {}, sendCourse = null }) {
   const student = await fetchSelfUser(origin);
-  const courses = await fetchAllCourses();
-  if (!courses.length) throw new Error("No active courses found in this Canvas account.");
+  // Canvas files a concluded course under `completed`, not `active`, so each
+  // state is its own request. A course can in principle come back from both;
+  // keyed by id it is collected once.
+  const byId = new Map();
+  for (const state of ["active", "completed"]) {
+    for (const course of await fetchAllCourses(state)) byId.set(course.id, course);
+  }
+  const courses = [...byId.values()].sort((a, b) => a.name.localeCompare(b.name));
+  if (!courses.length) throw new Error("No courses found in this Canvas account.");
   const files = [];
   const manifestCourses = [];
   const warnings = [];
+  // Set once any course went up file by file. The sender enforced the cap as it
+  // went, so the check at the end is only for the one-zip fallback.
+  let sentPerFile = false;
 
   for (const [index, course] of courses.entries()) {
     onProgress({ phase: "collecting", course: course.name, index, total: courses.length });
@@ -172,13 +213,30 @@ async function collectExport({ origin, extensionVersion, onProgress = () => {} }
     warnings.push(...recorder.warnings);
 
     const manifestAssignments = [];
+    // Filenames left out as a type the backend cannot read. Reported once per
+    // course: a warning per file would be hundreds of lines for one video class.
+    const unreadableFiles = [];
     // Folders of gradebook items with nothing turned in. Their teacher files
     // are left out on purpose, so they are not reported as unclaimed below.
     const withheld = new Set();
     for (const [folder, { assignment, submission }] of recorder.assignments) {
-      const { entry, withhold } = assignmentEntry({ folder, assignment, submission, courseFiles, warnings });
+      const { entry, withhold } = assignmentEntry({
+        folder,
+        assignment,
+        submission,
+        courseFiles,
+        warnings,
+        unreadableFiles,
+      });
       if (withhold) withheld.add(folder);
       if (entry) manifestAssignments.push(entry);
+    }
+    if (unreadableFiles.length) {
+      warnings.push(
+        `Left out ${unreadableFiles.length} file(s) in ${course.name} that Ethyra can't read yet ` +
+          `(audio, video, slides or older formats): ${unreadableFiles.slice(0, 5).join(", ")}` +
+          (unreadableFiles.length > 5 ? ", …" : "")
+      );
     }
 
     // A course with nothing turned in anywhere is not evidence about anybody.
@@ -200,9 +258,10 @@ async function collectExport({ origin, extensionVersion, onProgress = () => {} }
     // trace. The warning is what would have made that visible on the first run.
     const claimed = new Set(manifestAssignments.flatMap((a) => a.files.map((f) => f.path)));
     const unclaimed = [];
+    const courseClaimed = [];
     for (const f of courseFiles) {
       const path = `${f.path}${f.filename}`;
-      if (claimed.has(path)) files.push(f);
+      if (claimed.has(path)) courseClaimed.push(f);
       else if (!withheld.has(f.path)) unclaimed.push(path);
     }
     if (unclaimed.length) {
@@ -213,9 +272,38 @@ async function collectExport({ origin, extensionVersion, onProgress = () => {} }
       );
     }
 
-    manifestCourses.push(
-      manifestCourse({ course, path: recorder.courseFolder, assignments: manifestAssignments })
-    );
+    let courseEntry = manifestCourse({ course, path: recorder.courseFolder, assignments: manifestAssignments });
+
+    // ── Sent now, while this course's download links are fresh ────────
+    //
+    // Each file is fetched, hashed and, if this student has never sent it,
+    // written to their store; the manifest line gains the hash that names it.
+    // A file that could not be fetched is dropped from the manifest the same
+    // way the archive path drops one, so nothing names bytes that never arrived.
+    if (sendCourse && courseClaimed.length) {
+      const { failed, hashes } = await sendCourse({
+        course: course.name,
+        files: courseClaimed,
+        index,
+        total: courses.length,
+      });
+      if (hashes) {
+        sentPerFile = true;
+        for (const a of courseEntry.assignments) {
+          for (const f of a.files) Object.assign(f, hashes.get(f.path) || {});
+        }
+      }
+      if (failed.length) {
+        warnings.push(`${failed.length} file(s) in ${course.name} could not be downloaded from Canvas and were left out.`);
+        const gone = new Set(failed);
+        for (let i = courseClaimed.length - 1; i >= 0; i--) {
+          if (gone.has(`${courseClaimed[i].path}${courseClaimed[i].filename}`)) courseClaimed.splice(i, 1);
+        }
+        courseEntry = pruneFailed({ courses: [courseEntry] }, failed).courses[0];
+      }
+    }
+    files.push(...courseClaimed);
+    if (courseEntry) manifestCourses.push(courseEntry);
   }
 
   const manifest = buildManifest({
@@ -245,12 +333,13 @@ async function collectExport({ origin, extensionVersion, onProgress = () => {} }
   // choosing what to leave out is not a decision this code gets to make.
   //
   // The message says the size and stops there, on purpose. This export has no
-  // course picker — every active enrolment goes, every time — so there is
+  // course picker — every enrolment goes, every time — so there is
   // nothing a student can do about the total. Telling them to try again, or to
   // remove something, would be an instruction they cannot follow, which is
   // worse than admitting the limit is ours to raise.
   const totalBytes = files.reduce((sum, f) => sum + (f.size || 0), 0);
-  if (totalBytes > ETHYRA_MAX_TOTAL_BYTES) {
+  logExportSize(files, totalBytes);
+  if (!sentPerFile && totalBytes > ETHYRA_MAX_TOTAL_BYTES) {
     const mb = Math.round(totalBytes / (1024 * 1024));
     const limit = Math.round(ETHYRA_MAX_TOTAL_BYTES / (1024 * 1024));
     throw new Error(
@@ -279,10 +368,12 @@ async function collectExport({ origin, extensionVersion, onProgress = () => {} }
  * manifest pointing at bytes that were never uploaded, which the backend
  * reports as a missing file.
  */
-function assignmentEntry({ folder, assignment, submission, courseFiles, warnings }) {
+function assignmentEntry({ folder, assignment, submission, courseFiles, warnings, unreadableFiles = [] }) {
   const inFolder = courseFiles.filter((f) => f.path === folder);
   const submitted = inFolder.some((f) => (f.role || ROLE_SUBMISSION) === ROLE_SUBMISSION);
-  const own = inFolder.filter((f) => !oversized(f, warnings));
+  // Type first: a 200 MB video is left out for being a video, and saying it
+  // was "over the 50 MB limit" would suggest a smaller one would have been read.
+  const own = inFolder.filter((f) => !unreadable(f, unreadableFiles) && !oversized(f, warnings));
   const manifestFiles = own.map((f) => ({
     path: `${f.path}${f.filename}`,
     role: f.role || ROLE_SUBMISSION,
@@ -295,8 +386,8 @@ function assignmentEntry({ folder, assignment, submission, courseFiles, warnings
     return { entry: manifestAssignment({ assignment, submission, path, files: manifestFiles }), withhold: false };
   }
 
-  // The student DID submit, but every file was over the per-file cap and
-  // `oversized` has already said so. Not listed at all: a gradebook row with
+  // The student DID submit, but every file was over the per-file cap or a type
+  // Ethyra cannot read, and that has already been said. Not listed at all: a gradebook row with
   // `files: []` would tell the class window "No writing to read" about work
   // that exists and was only too large to send.
   if (submitted) return { entry: null, withhold: true };
@@ -307,6 +398,15 @@ function assignmentEntry({ folder, assignment, submission, courseFiles, warnings
   // and the backend skips it without an agent call. The teacher's attachments
   // stay behind — with no work beside them they are not evidence about anybody.
   return { entry: manifestAssignment({ assignment, submission, path, files: [] }), withhold: true };
+}
+
+/** True when a file's type is one the backend cannot read, recording its name. */
+function unreadable(file, unreadableFiles) {
+  const dot = file.filename.lastIndexOf(".");
+  if (dot < 0) return false;
+  if (!ETHYRA_UNREADABLE_EXTENSIONS.has(file.filename.slice(dot + 1).toLowerCase())) return false;
+  unreadableFiles.push(file.filename);
+  return true;
 }
 
 function oversized(file, warnings) {
