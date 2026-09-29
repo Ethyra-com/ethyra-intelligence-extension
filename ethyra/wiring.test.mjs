@@ -215,7 +215,7 @@ test("each cross-file symbol is defined, and loaded before its consumer", () => 
 test("nothing is injected until the student opens the popup", () => {
   // Inherited from upstream, the manifest matched every HTTPS host, so Chrome
   // put this whole bundle into every page the student visited. `content.js`
-  // guarded itself with `isCanvas()` so nothing RAN — but PRIVACY.md promises
+  // guarded itself with `isCanvas()` so nothing RAN — but LEGAL.md promises
   // the extension "does not run on non-Canvas sites", and a promise kept by a
   // runtime guard inside code that is already loaded is a weaker thing than the
   // sentence claims.
@@ -997,7 +997,7 @@ test("a course the user teaches is rejected before anything is fetched from it",
   // Position is the whole point. A filter after collection still pulls every
   // student's submissions, comment threads and rubric marks into the tab, which
   // has happened whether or not anything is uploaded afterwards, and which
-  // PRIVACY.md tells students does not happen. So this asserts ORDER, not
+  // LEGAL.md tells students does not happen. So this asserts ORDER, not
   // presence.
   const source = read("downloader.js");
 
@@ -1176,7 +1176,7 @@ test("no student-facing message tells them to use a control that does not exist"
 });
 
 test("a release build carries no unanswered privacy placeholders", (t) => {
-  // PRIVACY.md holds `[TODO]`s for facts that are legal and business decisions —
+  // LEGAL.md holds `[TODO]`s for facts that are legal and business decisions —
   // the retention period, the legal entity, the FERPA role, the contact address.
   // They cannot be written from the code and must not be invented; a fabricated
   // retention period is a checkable false statement, which is worse than a
@@ -1189,7 +1189,7 @@ test("a release build carries no unanswered privacy placeholders", (t) => {
   // So the gate is the version. The store requires a bump on every submission,
   // which makes it the one thing that cannot be forgotten on the way out, and
   // leaving 0.x is the deliberate act of calling this releasable.
-  const privacy = readFileSync(join(ROOT, "PRIVACY.md"), "utf8");
+  const privacy = readFileSync(join(ROOT, "LEGAL.md"), "utf8");
   const placeholders = privacy.match(/\[TODO/g) || [];
 
   if (manifest.version.startsWith("0.")) {
@@ -1200,14 +1200,14 @@ test("a release build carries no unanswered privacy placeholders", (t) => {
   assert.equal(
     placeholders.length,
     0,
-    `PRIVACY.md still has ${placeholders.length} [TODO] placeholder(s) at version ${manifest.version}`
+    `LEGAL.md still has ${placeholders.length} [TODO] placeholder(s) at version ${manifest.version}`
   );
 });
 
 test("the disclosures do not claim to collect what the code refuses to ask for", () => {
   // NOTICE said this extension transmits "grades and instructor comments" — true
   // of the plan it was written from, and false of the code for as long as the
-  // code has existed. It contradicted PRIVACY.md, which a student reads, and it
+  // code has existed. It contradicted LEGAL.md, which a student reads, and it
   // overstated collection in the one document a reviewer reaches for first.
   //
   // Only the AFFIRMATIVE half of each disclosure is checked. Both documents name
@@ -1226,12 +1226,12 @@ test("the disclosures do not claim to collect what the code refuses to ask for",
     assert.ok(!pattern.test(notice.slice(start, end)), `NOTICE lists ${pattern} as collected`);
   }
 
-  // PRIVACY.md's equivalent: everything above its "What it does not read" heading.
-  const privacy = readFileSync(join(ROOT, "PRIVACY.md"), "utf8");
-  const cut = privacy.indexOf("## What it does not read");
-  assert.ok(cut !== -1, "PRIVACY.md's exclusion heading moved or was renamed");
+  // LEGAL.md's equivalent: everything above its "What the Extension Does Not Read" heading.
+  const privacy = readFileSync(join(ROOT, "LEGAL.md"), "utf8");
+  const cut = privacy.indexOf("## What the Extension Does Not Read");
+  assert.ok(cut !== -1, "LEGAL.md's exclusion heading moved or was renamed");
   for (const pattern of NEVER_COLLECTED) {
-    assert.ok(!pattern.test(privacy.slice(0, cut)), `PRIVACY.md lists ${pattern} as collected`);
+    assert.ok(!pattern.test(privacy.slice(0, cut)), `LEGAL.md lists ${pattern} as collected`);
   }
 });
 

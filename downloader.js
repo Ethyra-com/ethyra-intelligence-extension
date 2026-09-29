@@ -480,7 +480,7 @@ async function downloadCourse(courseId, courseName, domain, onProgress, ethyra =
   // on. A check after collection would still have pulled every student's
   // submissions, comment threads and rubric marks into this tab, which is a
   // thing that happened whether or not anything was uploaded afterwards, and
-  // which PRIVACY.md tells students does not happen.
+  // which LEGAL.md tells students does not happen.
   //
   // One course, not the export: a student who TAs a lab still has their own five
   // courses collected. `collect.js` turns this into a skip with a reason.

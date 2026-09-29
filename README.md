@@ -45,7 +45,7 @@ The exclusions are enforced at the **request**, not by a filter afterwards —
 for. Data not requested is data not received, and no later filter can be
 forgotten. `ethyra/wiring.test.mjs` fails the build if any of them reappears.
 
-Full detail in [PRIVACY.md](PRIVACY.md).
+Full detail in [LEGAL.md](LEGAL.md): Ethyra's privacy policy and terms, one document for the web app and this extension. It is a copy of `ethyra-intelligence-backend/LEGAL.md`; edit that one and copy it here.
 
 ## How it works
 
@@ -147,21 +147,9 @@ No dependencies and no browser. Two suites:
       policy and muted assignments. Everything degrades gracefully if they do
       not, but the value proposition changes.
 - [ ] **Branding.** `icons/` is still upstream's artwork.
-- [ ] **Fill the `[TODO]` placeholders in PRIVACY.md** — retention, the legal
-      entity, the FERPA posture, the Azure model-training position, and the
-      contact address. A privacy policy is a Chrome Web Store gate and must not
-      ship with placeholders in it. `wiring.test.mjs` fails the build if any
-      remain once `manifest.json` leaves `0.x`, so this cannot be forgotten at
-      submission time — but the facts are legal and business decisions and must
-      not be invented to clear the test.
-- [ ] **Two backend facts the policy depends on**, both verified against
-      `ethyra-intelligence-backend` on 2026-09-17 and neither fixable here:
-      there is **no retention or expiry mechanism of any kind** — no scheduled
-      purge, no blob lifecycle policy, nothing removed except by the delete
-      endpoint — and **deleting an upload does not remove the extracted text**,
-      which is stored keyed on content hash, shared across users by design, and
-      carries no user id. Both change what the policy has to say, and one may be
-      a bug rather than a disclosure.
+- [ ] **Publish [LEGAL.md](LEGAL.md) on the website.** Its privacy page URL is
+      what the Chrome Web Store listing points to. See
+      [CHROME_WEB_STORE.md](CHROME_WEB_STORE.md) for the rest of submission.
 - [ ] **Storage account set up for direct upload** (`ethyraintelligence`):
       a CORS rule letting any origin `PUT`/`OPTIONS` with headers
       `x-ms-blob-type` and `content-type` (schools run Canvas on their own
@@ -195,7 +183,7 @@ limit it stops and says so:
   matching the backend's `MAX_DIRECT_UPLOAD_BYTES`). Checked before each batch
   is sent, so an export over it stops partway with at most 10 GB stored. Files
   already sent stay in the student's store and are skipped by the next export;
-  nothing expires them yet (see "Before this is usable").
+  they are kept until the student deletes them (see LEGAL.md).
 - **One-zip fallback: 500 MB** (`ETHYRA_MAX_ZIP_BYTES`, matching the backend's
   `MAX_UPLOAD_BYTES`). Checked on Canvas's sizes before anything is fetched and
   again on the real bytes while the zip is built. Nothing is uploaded when it is
