@@ -47,7 +47,7 @@ By creating an account, installing the Extension, or otherwise using the Service
 
 ### Coursework You Export With the Extension
 
-The Extension does nothing until you open it on a Canvas page and click **Export**. Installing it, or visiting Canvas with it installed, sends nothing.
+The Extension does not read or send any of your Canvas coursework until you open it on a Canvas page and click **Export**. Installing it, or visiting Canvas with it installed, sends nothing. Signing in to the Extension sends only the account information described above, and keeps a sign-in token in your browser (see [Cookies and Browser Storage](#cookies-and-browser-storage)).
 
 When you click **Export**, the Extension reads the following from the Canvas site you are signed in to. It covers every course where you are enrolled **as a student**, both current and completed.
 
@@ -173,7 +173,7 @@ The Extension does not ask for permission to read your tabs or browsing history,
 
 We keep your account and coursework until you delete it or ask us to delete it. We do not delete it automatically after a set period, because your learning profile is built from all of your coursework over time.
 
-- **Deleting your account.** Email [hello@ethyra.com](mailto:hello@ethyra.com) from the address on your account. Within 30 days, we will delete your account, your uploaded files, your course and assignment records, and everything generated from them.
+- **Deleting your account.** Email [hello@ethyra.com](mailto:hello@ethyra.com) from the address on your account. Within 30 days, we will delete your account, your uploaded files, your course and assignment records, and everything generated from them, except the processing caches described below.
 - **The Extension.** Signing out removes its stored sign-in token. Uninstalling it removes everything it stores in your browser.
 
 **Processing caches.** So that identical documents are not processed twice, we keep a cache of text extracted from documents and of AI responses. The cache is indexed by a fingerprint of the content, not by your account. These entries do not contain your account ID, but they can contain text from your work, and they may remain after your account is deleted. Copies in backups and service-provider logs are removed on those systems' own schedules.

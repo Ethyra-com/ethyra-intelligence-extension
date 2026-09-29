@@ -9,11 +9,11 @@ confirm them in the dashboard.
 
 | # | Blocker | Why | Rejection code |
 |---|---|---|---|
-| 1 | **Consent screen inside the extension**, before any data is collected | Disclosure "must not be located only in a privacy policy, terms of service, or similar document" and "must occur within the Product's user interface", with an explicit agree action. The popup's sign-up checkbox (`ethyra/popup.html`) doesn't cover existing users who sign in. Its links to `ethyra.com/terms` and `/privacy` are already the URLs `LEGAL.md` targets. | Purple Nickel |
+| 1 | **Consent screen inside the extension**, before sign-up or sign-in, so it comes before any data is collected (credentials as well as coursework) | Disclosure "must not be located only in a privacy policy, terms of service, or similar document" and "must occur within the Product's user interface", with an explicit agree action. The popup's sign-up checkbox (`ethyra/popup.html`) doesn't cover existing users who sign in. Its links to `ethyra.com/terms` and `/privacy` are already the URLs `LEGAL.md` targets. | Purple Nickel |
 | 2 | **Remove the dev hosts** from `manifest.json` `host_permissions`: `http://localhost:8001/*` and `https://intelligence-backend-…azurewebsites.net/*` | Every host must be justifiable in production | Purple Potassium |
 | 3 | **Publish `LEGAL.md` on the website** at `ethyra.com/privacy` and `/terms`. The privacy URL must load without signing in. | Required whenever an extension handles user data | Purple Lithium |
 | 4 | **Replace the icons and screenshots.** `icons/` and `screenshots/` are still upstream's artwork. | The listing must match the product | Yellow Zinc / impersonation |
-| 5 | **Bump `manifest.json` out of `0.x`** | Required by the store on every upload. It also arms the placeholder check in `wiring.test.mjs`. | none |
+| 5 | **Increase `manifest.json` `version` on every upload** | The store rejects an upload whose version isn't higher than the one before it. The first upload can be any version, and staying in `0.x` is allowed. Separately, `wiring.test.mjs` fails any version outside `0.x` while `LEGAL.md` still contains `[TODO]` placeholders (it has none today). | none |
 | 6 | **Rename the extension to match the policy.** `manifest.json` `name`, `description` and `action.default_title`, and the popup, still say "Ethyra Intelligence"; The policy (`LEGAL.md`) calls it "Ethyra — Canvas Export". | The listing, the extension and the policy must describe the same product | Yellow Zinc |
 | 7 | **Create a reviewer test account** (see [Test instructions](#test-instructions)) | Reviewers who can't sign in or reach Canvas reject the item as not working | Yellow Magnesium |
 
@@ -24,7 +24,8 @@ Sources:
 - [Troubleshooting codes](https://developer.chrome.com/docs/webstore/troubleshooting)
 
 ### What the consent screen must contain
-It must appear before the first export, in the popup, and require a deliberate action such as ticking a box and pressing "Agree". It should say, in plain words:
+It must be the popup's first screen, shown before the sign-up and sign-in forms, because those forms already collect authentication data: email, password and name, and a refresh token is stored afterwards. It must require a deliberate action such as ticking a box and pressing "Agree". Existing users who are already signed in must also see it before their next export. It should say, in plain words:
+- that signing in sends your email and password to Ethyra, and keeps a sign-in token in the extension;
 - what the extension reads: your submissions, typed answers, assignment instructions, rubrics, instructor-attached files, due and submission dates, your own grades, course names and your name, for every course where you are a student;
 - that this is uploaded to Ethyra and analyzed by AI;
 - what it doesn't read;
@@ -35,9 +36,9 @@ It must appear before the first export, in the popup, and require a deliberate a
 - **Registration.** There is a one-time fee, about US$5; the amount isn't on the official page **(unverified)**. The account email can't be changed later, so use a dedicated address. [Register](https://developer.chrome.com/docs/webstore/register)
 - **Account setup.** Publisher name and verified contact email. A physical address is required only if the extension sells anything. [Set up](https://developer.chrome.com/docs/webstore/set-up-account)
 - **2-Step Verification.** Mandatory before publishing or updating. [2SV](https://developer.chrome.com/docs/webstore/program-policies/two-step-verification)
-- **Trader declaration (EU DSA).** Ethyra is a business, so declare as a **trader**. The legal name, address, phone and email you give are shown publicly on the listing. [Trader disclosure](https://developer.chrome.com/docs/webstore/program-policies/trader-disclosure)
+- **Trader declaration (EU DSA).** Every publisher declares trader or non-trader status. You are a trader if you publish on the store for purposes related to your trade, business, craft or profession. Being a company doesn't settle it on its own; what counts is why you publish there. This extension exists to bring users into Ethyra's product, so Ethyra will most likely be a trader, but confirm that against Google's definition before declaring. A trader must provide a legal name, address, phone number and email, and Google may ask for verification documents. **These contact details are shown publicly on the listing.** [Trader disclosure](https://developer.chrome.com/docs/webstore/program-policies/trader-disclosure), [FAQ](https://developer.chrome.com/docs/webstore/program-policies/trader-verification-faq)
 - **Team access.** Add teammates to the publisher with a role (Viewer, Item Manager, Editor or Admin). [Publishers](https://developer.chrome.com/docs/webstore/group-publishers)
-- **Limit.** A new publisher can have at most 2 published extensions. [Publish](https://developer.chrome.com/docs/webstore/publish)
+- **Item limit.** A new publisher starts with a default limit of 2 published extensions; themes don't count. The limit is per publisher, and you can request an increase. Most requests get an immediate decision; others take a few days. Requests can be denied for low user engagement on existing extensions, or if the account hasn't yet met Google's tenure and activity requirements. [Item limits](https://developer.chrome.com/docs/webstore/publish)
 
 ## Privacy practices tab
 
@@ -112,7 +113,7 @@ It must appear before the first export, in the popup, and require a deliberate a
 The dashboard's Test instructions tab takes credentials for reviewers. Provide:
 - an Ethyra test account (email and password), created in production;
 - a Canvas account with at least one course containing a submission, for example a free Canvas account on `canvas.instructure.com` with a seeded course;
-- steps: open the Canvas course list → click the Ethyra icon → sign in → agree → Export → open the web app to see the result.
+- steps: open the Canvas course list → click the Ethyra icon → agree → sign in → Export → open the web app to see the result.
 
 ## Review
 
