@@ -63,18 +63,23 @@
   font-display: swap;
 }
 
-/* Verbatim from `lpTheme.css`. Do not adjust these to taste — if the product's
-   palette moves, copy the new values; if it has not moved, neither should
-   these. */
+/* The LIGHT palette, verbatim from the `:root[data-theme='light']` block of
+   `lpTheme.css`. Do not adjust these to taste — if the product's palette moves,
+   copy the new values; if it has not moved, neither should these.
+   `lpTheme.css` has no danger/ok tokens, so those two are this file's own,
+   darkened from the dark palette's to read on white. */
 :root {
-  --lp-bg: #0c0b0a;
-  --lp-fg: #f3ebe0;
-  --lp-muted: #8f877d;
-  --lp-line: rgba(243, 235, 224, 0.14);
-  --lp-orange: #fa680c;
-  --lp-orange-soft: rgba(250, 104, 12, 0.14);
-  --lp-danger: #ff6b6b;
-  --lp-ok: #7ac74f;
+  --lp-bg: #ffffff;
+  --lp-fg: #17120d;
+  --lp-muted: #6e6e6e;
+  --lp-line: rgba(12, 11, 10, 0.16);
+  --lp-orange: #d2560a;
+  --lp-orange-hover: #e35a05;
+  --lp-on-orange: #1a0d04;
+  --lp-orange-soft: rgba(250, 104, 12, 0.16);
+  --lp-hover: rgba(12, 11, 10, 0.04);
+  --lp-danger: #c62828;
+  --lp-ok: #2e7d32;
   --lp-hero: mondwest, 'Pixelify Sans', serif;
   --lp-head: 'Pixelify Sans', sans-serif;
   --lp-body: neueBit, GeistPixelSquare, sans-serif;
@@ -208,7 +213,7 @@ body {
   border: 1px solid var(--lp-orange);
   border-radius: 0;
   background: var(--lp-orange);
-  color: #1a0d04;
+  color: var(--lp-on-orange);
   font-family: var(--lp-ui);
   font-size: 0.78rem;
   font-weight: 500;
@@ -217,8 +222,8 @@ body {
 }
 
 .lp-auth-submit:hover:not(:disabled) {
-  background: #ff7a26;
-  border-color: #ff7a26;
+  background: var(--lp-orange-hover);
+  border-color: var(--lp-orange-hover);
 }
 
 .lp-auth-submit:disabled {
@@ -244,7 +249,7 @@ body {
 }
 
 .lp-auth-secondary:hover {
-  background: rgba(243, 235, 224, 0.05);
+  background: var(--lp-hover);
 }
 
 .lp-auth-link {

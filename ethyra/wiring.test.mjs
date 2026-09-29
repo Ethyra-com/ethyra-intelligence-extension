@@ -128,10 +128,15 @@ const REQUIRED = [
   ["validateManifest", "ethyra/manifest.js", "ethyra/collect.js"],
   ["MANIFEST_NAME", "ethyra/manifest.js", "ethyra/archive.js"],
   ["ETHYRA_MAX_FILE_BYTES", "ethyra/profile.js", "ethyra/collect.js"],
+  ["ETHYRA_UNREADABLE_EXTENSIONS", "ethyra/profile.js", "ethyra/collect.js"],
   ["ETHYRA_MAX_TOTAL_BYTES", "ethyra/profile.js", "ethyra/collect.js"],
   ["collectExport", "ethyra/collect.js", "ethyra/content.js"],
   ["buildArchive", "ethyra/archive.js", "ethyra/content.js"],
-  ["uploadArchive", "ethyra/upload.js", "ethyra/content.js"],
+  ["createFileSender", "ethyra/upload.js", "ethyra/content.js"],
+  ["completeUpload", "ethyra/upload.js", "ethyra/content.js"],
+  ["uploadMultipart", "ethyra/upload.js", "ethyra/content.js"],
+  ["pruneFailed", "ethyra/archive.js", "ethyra/collect.js"],
+  ["fetchFileBytes", "ethyra/archive.js", "ethyra/upload.js"],
 ];
 
 test("guardsAround reports the conditions that enclose a line, and only those", () => {
@@ -410,9 +415,10 @@ test("the popup's theme loads no remote resource", () => {
     assert.ok(existsSync(join(ROOT, "ethyra", face)), `${face} is declared but not bundled`);
   }
 
-  // The palette is a copy of the product's; these are the values that must not
-  // drift. If the frontend's `lpTheme.css` moves, copy it — do not re-taste it.
-  for (const token of ["--lp-bg: #0c0b0a", "--lp-fg: #f3ebe0", "--lp-orange: #fa680c"]) {
+  // The palette is a copy of the product's LIGHT theme; these are the values
+  // that must not drift. If the frontend's `lpTheme.css` moves, copy it — do
+  // not re-taste it.
+  for (const token of ["--lp-bg: #ffffff", "--lp-fg: #17120d", "--lp-orange: #d2560a"]) {
     assert.ok(css.includes(token), `${token} does not match the product's theme`);
   }
 });
@@ -522,39 +528,20 @@ test("the analysis view says the same things the web app says", () => {
   assert.match(html, /You can close this/);
 });
 
-test("the analysis view offers the web app and a copy of what was sent", () => {
+test("the analysis view offers the web app, and no copy of an archive that no longer exists", () => {
   const html = read(manifest.action.default_popup);
   const popup = code("ethyra/popup.js");
   const content = code("ethyra/content.js");
   const sw = read(manifest.background.service_worker);
 
   assert.match(html, /id="analysis-open"/, "there is no way through to the web app");
-  assert.match(html, /id="analysis-download"/, "there is no way to save a copy");
   assert.match(sw, /case "ETHYRA_OPEN_WEB_APP"/);
 
-  // The download is asked of the TAB. The bytes live in the page that built
-  // them, and routing a 300 MB Blob through `chrome.runtime.sendMessage` is the
-  // size problem `upload.js` exists to avoid.
-  assert.match(popup, /askPage\(\{ type: "ETHYRA_DOWNLOAD_ARCHIVE" \}\)/);
-  assert.match(content, /ETHYRA_DOWNLOAD_ARCHIVE/);
-  assert.ok(
-    !/ETHYRA_DOWNLOAD_ARCHIVE/.test(sw),
-    "the archive must not be routed through the service worker"
-  );
-
-  // The same bytes that were uploaded, not a rebuild: re-fetching from Canvas
-  // would take minutes and could legitimately produce a different archive,
-  // since attachment URLs expire and work can be resubmitted in between.
-  assert.match(content, /lastArchive = \{/, "the uploaded archive is not retained");
-  const assign = content.indexOf("lastArchive = {");
-  const upload = content.indexOf("uploadArchive(");
-  assert.ok(
-    assign > 0 && assign < upload,
-    "the copy must be retained BEFORE the upload — a failed upload is when it is most wanted"
-  );
-
-  // A dead tab is the common case, not an edge case, and must say which.
-  assert.match(popup, /Go back to that tab/);
+  // Files go to Ethyra one at a time as each course is read, so there is no
+  // archive to hand back, and holding every file until the end to build one is
+  // the memory cost per-file upload exists to avoid.
+  assert.ok(!/analysis-download/.test(html + popup), "a button for a copy that is never built");
+  assert.ok(!/ETHYRA_DOWNLOAD_ARCHIVE|lastArchive/.test(content));
 });
 
 test("no Canvas name reaches Ethyra", () => {
@@ -971,7 +958,7 @@ test("HTML the student wrote is link-rewritten, and nothing is added to it", () 
   // the browser has none unless something computes it. This is the only
   // generated document Ethyra mode emits, so it was the only entry reaching
   // `collect.js` sizeless — where a missing size reads as zero and passes the
-  // 50 MB per-file cap and contributes nothing to the 500 MB total. See
+  // 50 MB per-file cap and contributes nothing to the whole-archive total. See
   // `sizes.test.mjs` for what the consumer actually does with that.
   //
   // It has to measure the SAME string that becomes the archive entry. Measuring
@@ -1141,6 +1128,17 @@ test("the CDN host permission is required, never requested at runtime", () => {
   assert.match(block.slice(0, 1200), /if \(ethyra\) \{\s*throw new Error\(/);
 });
 
+test("the export reads past courses as well as current ones", () => {
+  // `fetchAllCourses()` defaults to `enrollment_state=active`, which Canvas
+  // limits to current terms. Everything under "Past Enrollments" is `completed`,
+  // and a student whose coursework is mostly from earlier years got an export
+  // of the one or two current courses with nothing turned in.
+  const source = code("ethyra/collect.js");
+  assert.match(source, /"active"/, "current enrolments must still be read");
+  assert.match(source, /"completed"/, "past enrolments must be read too");
+  assert.ok(!/fetchAllCourses\(\)/.test(source), "a bare call reads current courses only");
+});
+
 test("no student-facing message tells them to use a control that does not exist", () => {
   // The 413 message told students to deselect a course — wording left over from
   // a popup that briefly had a course picker. This export has none: every active
@@ -1257,4 +1255,26 @@ test("nothing asks Canvas for marks", () => {
   for (const field of ["score_statistics:", "teacher_comments:"]) {
     assert.ok(!builder.includes(field), `manifest.js still emits ${field}`);
   }
+});
+
+test("each course is sent as it is collected, and its manifest lines carry the hashes", () => {
+  const collect = code("ethyra/collect.js");
+  const content = code("ethyra/content.js");
+
+  // Inside the course loop, before the next course is read: links are fresh and
+  // nothing waits for the whole export.
+  const loop = collect.slice(collect.indexOf("for (const [index, course] of courses.entries())"));
+  assert.ok(loop.indexOf("sendCourse(") > 0 && loop.indexOf("sendCourse(") < loop.indexOf("buildManifest("));
+  assert.match(collect, /Object\.assign\(f, hashes\.get\(f\.path\)/, "manifest files must be named by hash");
+  assert.match(content, /sendCourse: sender\.sendCourse/);
+  assert.match(content, /sender\.mode === "zip"/, "the zip fallback is still reachable");
+});
+
+test("a running export gets a fresh token from the worker, and nothing else can", () => {
+  const sw = code("ethyra/background.js");
+  const content = code("ethyra/content.js");
+  const block = sw.slice(sw.indexOf('case "ETHYRA_GET_TOKEN"'));
+  assert.match(block.slice(0, 400), /status !== "running"/, "tokens only while an export runs");
+  assert.match(block.slice(0, 400), /getAccessToken\(\)/, "refreshed where the refresh token is");
+  assert.match(content, /type: "ETHYRA_GET_TOKEN"/);
 });

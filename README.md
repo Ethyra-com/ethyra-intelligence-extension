@@ -5,7 +5,7 @@ A Chrome extension that sends a student's own Canvas coursework to
 College and Career Readiness Standards to build a learning profile.
 
 Sign in, click **Export**, done. There is no course picker, no settings, and no
-file to save — every active course goes, every time.
+file to save — every course, current and past, goes every time.
 
 > **Status: pre-release.** Never run against a real Canvas account.
 > See [Before this is usable](#before-this-is-usable).
@@ -60,9 +60,9 @@ popup            sign in, press Export, watch progress
        │                session cookie is
        │
        ├─ downloader.js  upstream's collector, in Ethyra mode
-       ├─ collect.js     records structured metadata as it goes past
-       ├─ archive.js     one streamed zip across every course
-       └─ upload.js      POST /api/act/uploads
+       ├─ collect.js     records structured metadata; sends each course as it goes
+       ├─ upload.js      per course: hash → /files → PUT new files; then /complete
+       └─ archive.js     one zip in one request, only for a backend without /files
 ```
 
 Four decisions worth knowing before changing anything:
@@ -86,6 +86,16 @@ two.
 and which files survived cannot be known until they have all been tried — a
 Canvas attachment URL carries a time-limited verifier, and one expiring
 mid-export is ordinary.
+
+**Each file goes straight to blob storage, once.** A student with every past
+course has 1-2 GB of work, most of it sent last time. As each course is
+collected, its files are fetched a few at a time, hashed (SHA-256), and
+`POST /api/act/uploads/files` answers with a write URL for each file this
+student has never sent; only those are PUT. `POST /api/act/uploads/complete`
+then sends the manifest, every file named by its hash. Files live in the
+student's own store (`{user}/files/{sha256}`), so a re-export sends almost
+nothing. A backend without `/files` is detected on the first course and gets one
+zip in one request instead, capped at 500 MB.
 
 **Manifest paths are read back, never predicted.** Upstream truncates filenames
 for Windows path limits and appends ` (2)` on collision, both after collection
@@ -148,6 +158,15 @@ No dependencies and no browser. Two suites:
       which is stored keyed on content hash, shared across users by design, and
       carries no user id. Both change what the policy has to say, and one may be
       a bug rather than a disclosure.
+- [ ] **Storage account set up for direct upload** (`ethyraintelligence`):
+      a CORS rule letting any origin `PUT`/`OPTIONS` with headers
+      `x-ms-blob-type` and `content-type` (schools run Canvas on their own
+      domains, and the signed URL is what authorises the write), and
+      **Storage Blob Delegator** at account scope for the backend's managed
+      identity, which signs the URL with a user delegation key. Its existing
+      Blob Data Contributor is scoped to one container, which cannot request
+      that key. Without the role, `/files` answers 501 and the export falls back
+      to one zip (500 MB cap); without CORS, the PUTs fail.
 - [ ] **Backend must be deployed** with the `CANVAS_ORIGINS` and `X-Client`
       changes from the `chrome-extension` branch, or sign-in succeeds and the
       first token refresh fails.

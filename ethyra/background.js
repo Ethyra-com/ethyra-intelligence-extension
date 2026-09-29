@@ -71,9 +71,9 @@ async function writeExportState(state) {
  *
  * ── The race this exists to stop ──────────────────────────────────────
  *
- * A successful upload fires two messages back to back: `uploadArchive` reports
- * `{phase: "uploaded"}` from its `onload`, then resolves, and `runExport`
- * immediately sends `ETHYRA_EXPORT_DONE`. Both land in the listener below, both
+ * A successful upload fires two messages back to back: `runExport` reports
+ * `{phase: "uploaded"}` once the upload resolves, and immediately sends
+ * `ETHYRA_EXPORT_DONE`. Both land in the listener below, both
  * are async, and the progress branch is a check-then-act:
  *
  *   PROGRESS  reads  {status: "running"}
@@ -248,6 +248,27 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
             lastName: message.lastName,
           });
           sendResponse({ ok: true, user });
+          return;
+        }
+
+        /**
+         * A current token for a running export.
+         *
+         * An export with every past course runs for many minutes, longer than
+         * an access token lives, and calls the backend all the way through. So
+         * the content script asks before each call rather than holding the one
+         * it was handed, and the refresh happens here, where the refresh token
+         * is. Only while an export is running: the page never has a way to get
+         * one otherwise.
+         */
+        case "ETHYRA_GET_TOKEN": {
+          const state = await readExportState();
+          if (state.status !== "running") {
+            sendResponse({ ok: false });
+            return;
+          }
+          const accessToken = await getAccessToken();
+          sendResponse(accessToken ? { ok: true, accessToken } : { ok: false });
           return;
         }
 

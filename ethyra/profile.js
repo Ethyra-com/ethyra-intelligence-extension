@@ -64,8 +64,43 @@ const ETHYRA_CONTENT_TYPES = Object.freeze({
 /** Per-file cap. Mirrors the backend's `MAX_ARTIFACT_BYTES`; over it the upload fails. */
 const ETHYRA_MAX_FILE_BYTES = 50 * 1024 * 1024;
 
-/** Whole-archive cap, across every course. Mirrors the backend's `MAX_UPLOAD_BYTES`. */
-const ETHYRA_MAX_TOTAL_BYTES = 500 * 1024 * 1024;
+/**
+ * Whole-archive cap, across every course. Mirrors the backend's
+ * `MAX_DIRECT_UPLOAD_BYTES`: the archive goes straight to blob storage, so no
+ * request or server memory bounds it. A real export with every past course was
+ * 1.2 GB after unreadable media was left out.
+ */
+const ETHYRA_MAX_TOTAL_BYTES = 10 * 1024 * 1024 * 1024;
+
+/**
+ * File types the backend stores but cannot read, so they are never sent.
+ *
+ * Mirrors `UNSUPPORTED` in the backend's `extraction.py`, which sniffs bytes:
+ * anything with an `ftyp` box (every MP4/MOV video, M4A audio and HEIC photo),
+ * OLE (.doc/.xls/.ppt), slides, and zips (which is what .odt and iWork files
+ * are). Other binaries with no reader — GIF, TIFF, MP3, WAV — land in its
+ * "a file type we can't read yet" bucket.
+ *
+ * These are most of an export's bytes: a real one was 1.7 GB, mostly video and
+ * spoken-language recordings, none of it analysable. Uploading them costs the
+ * student the upload and buys nothing. When the backend learns a format, take
+ * it off this list.
+ *
+ * Matched on the extension because the bytes are not fetched until the archive
+ * is built, which is after this decision.
+ */
+const ETHYRA_UNREADABLE_EXTENSIONS = new Set([
+  // video
+  "mp4", "m4v", "mov", "avi", "mkv", "webm", "wmv", "flv", "3gp", "3g2", "mpg", "mpeg", "mts", "m2ts",
+  // audio
+  "mp3", "m4a", "wav", "aac", "ogg", "oga", "opus", "flac", "wma", "aif", "aiff", "amr", "caf",
+  // images with no reader (JPEG, PNG and WebP are OCR'd)
+  "heic", "heif", "avif", "gif", "tif", "tiff", "bmp",
+  // legacy Office, slides, OpenDocument, iWork
+  "doc", "xls", "ppt", "pps", "pptx", "ppsx", "odt", "ods", "odp", "pages", "numbers", "key",
+  // archives
+  "zip", "rar", "7z", "tar", "gz",
+]);
 
 /**
  * Thrown when a course is one the user teaches rather than takes.
@@ -101,5 +136,6 @@ if (typeof module !== "undefined" && module.exports) {
     ETHYRA_MAX_FILE_BYTES,
     ETHYRA_MAX_TOTAL_BYTES,
     ETHYRA_NOT_A_STUDENT,
+    ETHYRA_UNREADABLE_EXTENSIONS,
   };
 }

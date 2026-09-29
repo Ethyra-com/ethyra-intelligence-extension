@@ -90,8 +90,20 @@ async function buildArchive(files, manifest, { signal, onProgress = () => {} } =
 
   const response = downloadZip(source(), { buffersAreUTF8: true });
   const blob = await response.blob();
+  console.info(`[Ethyra] Zip built: ${Math.round((blob.size / (1024 * 1024)) * 10) / 10} MB (${blob.size} bytes).`);
   onProgress({ phase: "archiving", completed, total, current: null });
   return { blob, failed };
+}
+
+/**
+ * One file's bytes: a Canvas download, or content the collector generated as a
+ * `data:` URL (inline rich-text submissions). For the per-file upload, which
+ * hashes and sends each file on its own; `buildArchive` streams instead.
+ */
+async function fetchFileBytes(file, signal) {
+  const res = await fetch(file.url, file.url.startsWith("data:") ? {} : { signal });
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  return new Uint8Array(await res.arrayBuffer());
 }
 
 /**

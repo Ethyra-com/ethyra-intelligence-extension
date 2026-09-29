@@ -43,26 +43,6 @@ window.__ethyraContentScriptLoaded = true;
 if (isCanvas()) {
   let exportInFlight = null;
 
-  /**
-   * The archive that was just uploaded, kept so the student can save a copy.
-   *
-   * ── Why it is kept here, and what that costs ──────────────────────
-   *
-   * "Download a copy of what was sent" has to hand over the SAME bytes that
-   * were sent, or it answers a different question than the one asked. Rebuilding
-   * it would re-fetch every file from Canvas — minutes of work, and the second
-   * archive could legitimately differ from the first, since attachment URLs
-   * expire and an assignment can be resubmitted in between.
-   *
-   * So the Blob stays. That is up to `ETHYRA_MAX_TOTAL_BYTES` of memory held in
-   * the page after the upload has finished, which is a real cost and the reason
-   * this is a deliberate reference rather than an accident of scope.
-   *
-   * It dies with the page, like everything else here, and the popup says so
-   * rather than offering a button that fails.
-   */
-  let lastArchive = null;
-
   const report = (progress) => {
     chrome.runtime.sendMessage({ type: "ETHYRA_EXPORT_PROGRESS", progress }).catch(() => {
       // The popup may be closed and the worker asleep. Progress is advisory;
@@ -132,42 +112,6 @@ if (isCanvas()) {
       return false;
     }
 
-    /**
-     * Save a copy of the archive that was uploaded.
-     *
-     * Done here rather than through `chrome.downloads` because the bytes are
-     * here: an object URL minted in the page is downloadable from the page, and
-     * handing a 300 MB Blob to the worker to do it instead is the same problem
-     * `upload.js` avoids.
-     */
-    if (message?.type === "ETHYRA_DOWNLOAD_ARCHIVE") {
-      if (!lastArchive) {
-        sendResponse({
-          ok: false,
-          error:
-            "The copy is held in this tab and is gone — it is cleared when the page reloads. Export again to save one.",
-        });
-        return false;
-      }
-      try {
-        const url = URL.createObjectURL(lastArchive.blob);
-        const a = document.createElement("a");
-        a.href = url;
-        a.download = lastArchive.filename;
-        document.body.appendChild(a);
-        a.click();
-        a.remove();
-        // Not revoked immediately: Chrome reads the URL asynchronously after the
-        // click, and revoking in the same turn cancels the download it just
-        // started. A minute is far longer than it needs and costs nothing.
-        setTimeout(() => URL.revokeObjectURL(url), 60_000);
-        sendResponse({ ok: true });
-      } catch (err) {
-        sendResponse({ ok: false, error: err?.message || String(err) });
-      }
-      return false;
-    }
-
     if (message?.type === "ETHYRA_RUN_EXPORT") {
       if (exportInFlight) {
         sendResponse({ ok: false, error: "An export is already running in this tab." });
@@ -192,44 +136,59 @@ if (isCanvas()) {
    * act on, because by the time one happens the popup is probably closed and
    * this is the only record they will see.
    */
-  async function runExport({ apiUrl, accessToken, studentName }) {
+  async function runExport({ apiUrl, accessToken: firstToken, studentName }) {
     const origin = window.location.origin;
+    // Asked for before every call: the export outlives the token it started
+    // with. Falls back to that one if the worker cannot answer, so an expired
+    // session still reaches the backend and comes back as its own 401 message.
+    const accessToken = async () => {
+      try {
+        const res = await chrome.runtime.sendMessage({ type: "ETHYRA_GET_TOKEN" });
+        if (res?.accessToken) return res.accessToken;
+      } catch {
+        // The worker is restarting; the token we have may still be good.
+      }
+      return firstToken;
+    };
     const extensionVersion = chrome.runtime.getManifest().version;
 
     try {
       report({ phase: "collecting" });
+      // Each course's files go to Ethyra as soon as that course is collected,
+      // while its Canvas download links are fresh, and only the ones this
+      // student has never sent. See `createFileSender`.
+      const sender = createFileSender({ apiUrl, accessToken, onProgress: report });
       const { manifest, files, warnings } = await collectExport({
         origin,
         extensionVersion,
         onProgress: report,
+        sendCourse: sender.sendCourse,
       });
 
       if (!manifest.courses.length) {
         throw new Error("No submitted work was found in your Canvas courses.");
       }
 
-      report({ phase: "archiving", completed: 0, total: files.length + 1 });
-      const { blob, failed } = await buildArchive(files, manifest, { onProgress: report });
-      if (failed.length) {
-        warnings.push(`${failed.length} file(s) could not be downloaded from Canvas and were left out.`);
+      let upload;
+      if (sender.mode === "zip") {
+        // A backend without the per-file routes: one archive, one request.
+        report({ phase: "archiving", completed: 0, total: files.length + 1 });
+        const { blob, failed } = await buildArchive(files, manifest, { onProgress: report });
+        if (failed.length) {
+          warnings.push(`${failed.length} file(s) could not be downloaded from Canvas and were left out.`);
+        }
+        report({ phase: "uploading", loaded: 0, total: blob.size });
+        upload = await uploadMultipart({
+          apiUrl,
+          accessToken: await accessToken(),
+          blob,
+          studentName,
+          onProgress: report,
+        });
+      } else {
+        upload = await completeUpload({ apiUrl, accessToken, manifest, studentName });
+        report({ phase: "uploaded" });
       }
-
-      // Held before the upload, not after: an upload that fails is exactly when
-      // a student most wants the copy, and a failure never reaches the line
-      // below it.
-      lastArchive = {
-        blob,
-        filename: `ethyra-canvas-export-${new Date().toISOString().slice(0, 10)}.zip`,
-      };
-
-      report({ phase: "uploading", loaded: 0, total: blob.size });
-      const upload = await uploadArchive({
-        apiUrl,
-        accessToken,
-        blob,
-        studentName,
-        onProgress: report,
-      });
 
       // Awaited and retried — see `tellWorker`. Losing this leaves the popup on
       // a progress bar for an upload that has already landed.

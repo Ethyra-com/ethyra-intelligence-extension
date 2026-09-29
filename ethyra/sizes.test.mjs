@@ -4,7 +4,7 @@
  *   node --test "ethyra/*.test.mjs"
  *
  * `collect.js` enforces two limits and both read `f.size`: a 50 MB per-file cap
- * that drops one file with a warning, and a 500 MB whole-archive cap that
+ * that drops one file with a warning, and a 10 GB whole-archive cap that
  * refuses the export rather than trimming it.
  *
  * Neither can tell "this file is small" from "nobody recorded a size". A Canvas
@@ -36,7 +36,7 @@ for (const file of ["ethyra/profile.js", "ethyra/manifest.js", "helpers.js", "et
 // not — it goes to the global LEXICAL scope, which scripts share with each other
 // but which is invisible from out here. So the caps are read by evaluating their
 // names, and destructuring them off `sandbox` would silently yield undefined.
-const { oversized, assignmentEntry, pruneFailed } = sandbox;
+const { oversized, unreadable, assignmentEntry, pruneFailed } = sandbox;
 const ETHYRA_MAX_FILE_BYTES = vm.runInContext("ETHYRA_MAX_FILE_BYTES", sandbox);
 const ETHYRA_MAX_TOTAL_BYTES = vm.runInContext("ETHYRA_MAX_TOTAL_BYTES", sandbox);
 
@@ -77,7 +77,7 @@ test("the two caps are ordered, and mirror the backend", () => {
   // Per-file below total, or the per-file cap could never fire.
   assert.ok(ETHYRA_MAX_FILE_BYTES < ETHYRA_MAX_TOTAL_BYTES);
   assert.equal(ETHYRA_MAX_FILE_BYTES, 50 * 1024 * 1024);
-  assert.equal(ETHYRA_MAX_TOTAL_BYTES, 500 * 1024 * 1024);
+  assert.equal(ETHYRA_MAX_TOTAL_BYTES, 10 * 1024 * 1024 * 1024);
 });
 
 
@@ -155,4 +155,58 @@ test("a course left with only gradebook rows is dropped, as collect.js drops it"
 
   const m = pruneFailed(manifestWith(participation, lost), ["English 10/Essay 2/b.pdf"]);
   assert.equal(m.courses.length, 0);
+});
+
+// ── Types the backend cannot read are never sent ───────────────────────────
+
+test("video, audio, slides and legacy formats are left out and named", () => {
+  for (const filename of ["oral exam.MOV", "dialogue.m4a", "IMG_0412.HEIC", "slides.pptx", "notes.doc", "a.zip"]) {
+    const skipped = [];
+    assert.equal(unreadable({ filename }, skipped), true, filename);
+    assert.equal(skipped[0], filename);
+  }
+});
+
+test("everything the backend can read is kept", () => {
+  for (const filename of ["essay.pdf", "essay.docx", "data.xlsx", "scan.jpg", "scan.png", "submission_text_1.html", "main.py", "README"]) {
+    const skipped = [];
+    assert.equal(unreadable({ filename }, skipped), false, filename);
+    assert.equal(skipped.length, 0);
+  }
+});
+
+test("a submission that was only a video is left out, not listed as unsubmitted", () => {
+  const warnings = [];
+  const unreadableFiles = [];
+  const out = assignmentEntry({
+    folder: FOLDER,
+    assignment: ASSIGNMENT,
+    submission: SUBMISSION,
+    courseFiles: [
+      // Over the per-file cap too: it is reported for its type, not its size.
+      { path: FOLDER, filename: "presentation.mp4", role: "submission", size: ETHYRA_MAX_FILE_BYTES * 4 },
+      { path: FOLDER, filename: "rubric.pdf", role: "instruction_attachment", size: 10 },
+    ],
+    warnings,
+    unreadableFiles,
+  });
+  assert.equal(out.entry, null);
+  assert.equal(out.withhold, true);
+  assert.equal(warnings.length, 0, "a video is not 'over the 50 MB limit'");
+  assert.equal(unreadableFiles[0], "presentation.mp4");
+});
+
+test("a readable file beside a video still goes", () => {
+  const out = assignmentEntry({
+    folder: FOLDER,
+    assignment: ASSIGNMENT,
+    submission: SUBMISSION,
+    courseFiles: [
+      { path: FOLDER, filename: "script.docx", role: "submission", size: 10 },
+      { path: FOLDER, filename: "recording.mov", role: "submission", size: 10 },
+    ],
+    warnings: [],
+  });
+  assert.equal(out.entry.files.length, 1);
+  assert.equal(out.entry.files[0].path, `${FOLDER}script.docx`);
 });

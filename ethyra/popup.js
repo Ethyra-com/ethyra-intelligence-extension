@@ -88,8 +88,8 @@ const CONTENT_SCRIPTS = [
   "ethyra/profile.js",
   "ethyra/manifest.js",
   "downloader.js",
-  "ethyra/collect.js",
   "ethyra/archive.js",
+  "ethyra/collect.js",
   "ethyra/upload.js",
   "ethyra/content.js",
 ];
@@ -106,7 +106,7 @@ for (const id of [
   "who", "signout", "export", "ready-error",
   "progress-label", "progress-bar", "progress-cancel",
   "view-analyzing", "analysis-label", "analysis-bar", "analysis-detail",
-  "analysis-open", "analysis-download", "analysis-error", "analysis-close",
+  "analysis-open", "analysis-error", "analysis-close",
   "done-message", "done-warnings", "done-ok",
 ]) {
   els[id] = document.getElementById(id);
@@ -188,6 +188,11 @@ function renderProgress(state) {
   if (phase === "collecting") {
     label = state.course ? `Reading ${state.course}…` : "Reading your courses…";
     if (state.total) fraction = (state.index || 0) / state.total;
+  } else if (phase === "sending") {
+    // Only files never sent before go; the rest are already in Ethyra.
+    const already = state.skipped ? `, ${state.skipped} already sent` : "";
+    label = `Sending ${state.course || "your work"} — ${state.sent || 0} new${already}`;
+    if (state.total) fraction = ((state.index || 0) + 1) / state.total;
   } else if (phase === "archiving") {
     label = state.current ? `Packaging ${state.current}…` : "Packaging…";
     if (state.total) fraction = (state.completed || 0) / state.total;
@@ -612,36 +617,6 @@ els["analysis-open"].addEventListener("click", async () => {
   // Closed deliberately. A popup left open behind a new tab keeps polling a run
   // the student is now watching in the web app, in better detail.
   window.close();
-});
-
-/**
- * Save the archive that was uploaded.
- *
- * Asks the TAB, not the worker: the Blob lives in the page that built it, and
- * moving it through `chrome.runtime.sendMessage` is the same size problem
- * `upload.js` avoids.
- *
- * `askPage` resolving to null means there is no content script in that tab —
- * the student navigated, reloaded, or is looking at a different tab than the one
- * they exported from. That is the common case rather than an edge case, so it
- * gets a sentence saying which, instead of a generic failure.
- */
-els["analysis-download"].addEventListener("click", async () => {
-  fail(els["analysis-error"], "");
-  els["analysis-download"].disabled = true;
-  try {
-    const result = await askPage({ type: "ETHYRA_DOWNLOAD_ARCHIVE" });
-    if (!result) {
-      fail(
-        els["analysis-error"],
-        "The copy is held in the Canvas tab you exported from. Go back to that tab, without reloading it, and try again."
-      );
-      return;
-    }
-    if (!result.ok) fail(els["analysis-error"], result.error || "Could not save the copy.");
-  } finally {
-    els["analysis-download"].disabled = false;
-  }
 });
 
 els["done-ok"].addEventListener("click", async () => {
