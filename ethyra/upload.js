@@ -10,16 +10,19 @@
  *
  *   1. Its files are fetched from Canvas a few at a time, while the download
  *      links are fresh, and hashed (SHA-256).
- *   2. `POST /api/act/uploads/files` with the hashes answers with a write URL
- *      for each file this student has never sent. The rest are skipped.
+ *   2. `POST /api/act/uploads/files` with the hashes answers with a create-only
+ *      URL for each file this student has never sent. The rest are skipped.
  *   3. Each new file is PUT to its URL, retried on its own if it fails.
  *
  * Then `POST /api/act/uploads/complete` sends the manifest — every file named by
  * its hash — and the backend reads the files from the student's store.
  *
  * A backend without `/files` (not yet deployed, or unable to sign URLs) is found
- * out on the first course, before anything is sent, and the export falls back to
- * one zip in one request, which works up to that route's 500 MB limit.
+ * out by the first `/files` request, before anything is sent, and the export
+ * falls back to one zip in one request, which works up to that route's 500 MB
+ * limit. Only that first request decides it: once one has succeeded, the route
+ * exists, and a later failure is retried and then reported, never a reason to
+ * start again as a zip.
  *
  * ── Where this runs, and why it is a CORS problem ─────────────────────
  *
@@ -58,9 +61,13 @@ const UNREACHABLE =
 /**
  * Sends each course's files as it is collected. `mode` is "files" until the
  * first request finds a backend without the route, then "zip" for good.
+ * `confirmed` is set once a `/files` request has succeeded, which rules the
+ * fallback out for the rest of the export.
  */
-function createFileSender({ apiUrl, accessToken, signal, onProgress = () => {} }) {
-  const sender = { mode: "files", sent: 0, skipped: 0, sendCourse };
+function createFileSender({ apiUrl, accessToken, signal, maxTotalBytes = Infinity, onProgress = () => {} }) {
+  // `bytes` is the whole export so far, sent and skipped alike: the cap is on
+  // what the upload will contain, and a skipped file is in it too.
+  const sender = { mode: "files", confirmed: false, sent: 0, skipped: 0, bytes: 0, sendCourse };
 
   async function sendCourse({ course, files, index, total }) {
     const hashes = new Map();
@@ -83,11 +90,30 @@ function createFileSender({ apiUrl, accessToken, signal, onProgress = () => {} }
       const ok = fetched.filter(Boolean);
       if (!ok.length) continue;
 
-      const urls = await requestFileUrls({ apiUrl, accessToken, signal, files: ok });
+      // ── The cap, checked before anything in this batch is sent ────────
+      //
+      // Each course goes up as it is read, so the total is not known until the
+      // end, and checking it only then would send gigabytes before refusing.
+      // Checked here, an export over the cap stops with at most the cap's worth
+      // stored. Those files stay in the student's own store and are skipped by
+      // the next export, the same as after any export that does not finish.
+      const batchBytes = ok.reduce((n, f) => n + f.bytes.byteLength, 0);
+      if (sender.bytes + batchBytes > maxTotalBytes) {
+        const mb = (n) => Math.round(n / (1024 * 1024));
+        throw new Error(
+          `Your coursework is over Ethyra's ${mb(maxTotalBytes)} MB limit, so the export stopped at ${course}. ` +
+            "What was already sent is kept and will not be sent again. " +
+            "This is a limit on our side rather than anything you can change — please let Ethyra know."
+        );
+      }
+      sender.bytes += batchBytes;
+
+      const urls = await requestFileUrls({ apiUrl, accessToken, signal, files: ok, mayFallBack: !sender.confirmed });
       if (urls === null) {
         sender.mode = "zip";
         return { failed: [], hashes: null };
       }
+      sender.confirmed = true;
 
       await mapLimit(ok, FILE_CONCURRENCY, async (f) => {
         hashes.set(f.path, { sha256: f.sha256, size: f.bytes.byteLength });
@@ -146,17 +172,34 @@ async function sha256Hex(bytes) {
 }
 
 /**
- * Write URLs for the files not yet sent, or null for a backend that cannot
- * take them — 404 without the route, 501 unable to sign, or a failed preflight
- * (its CORS allowlist does not name the path), which arrives as unreachable.
+ * Create-only URLs for the files not yet sent.
+ *
+ * While `mayFallBack`, null for a backend that cannot take them — 404 without
+ * the route, 501 unable to sign, or a failed preflight (its CORS allowlist does
+ * not name the path), which arrives as unreachable. After the first success
+ * those same errors are an outage, not a missing route: retried, then thrown.
  */
-async function requestFileUrls({ apiUrl, accessToken, signal, files }) {
-  try {
-    const res = await callApi(`${apiUrl}/api/act/uploads/files`, {
+async function requestFileUrls({ apiUrl, accessToken, signal, files, mayFallBack = true }) {
+  const ask = () =>
+    callApi(`${apiUrl}/api/act/uploads/files`, {
       accessToken,
       signal,
       body: { files: files.map((f) => ({ sha256: f.sha256, size: f.bytes.byteLength })) },
     });
+  if (!mayFallBack) {
+    const res = await withRetry(async () => {
+      try {
+        return await ask();
+      } catch (err) {
+        const s = err?.status;
+        if (s === undefined || s === 408 || s === 429 || s >= 500) err.retryable = true;
+        throw err;
+      }
+    }, signal);
+    return res.upload || {};
+  }
+  try {
+    const res = await ask();
     return res.upload || {};
   } catch (err) {
     if (err?.name === "AbortError") throw err;
@@ -168,9 +211,23 @@ async function requestFileUrls({ apiUrl, accessToken, signal, files }) {
   }
 }
 
-/** One file, one PUT. Sending the same bytes again just rewrites them. */
-function putFile(url, bytes, signal) {
-  return putToStorage(url, bytes, { "x-ms-blob-type": "BlockBlob" }, signal);
+/**
+ * One file, one PUT.
+ *
+ * The URL can create the blob but never replace it, so a second PUT of a file
+ * that already landed — a retry whose first response was lost, or two exports
+ * at once — is answered 403. That is the goal having been reached, and failing
+ * the export over it would be wrong. An expired URL is a 403 too; it is not
+ * guessed at here, because `complete` checks every file arrived and says which
+ * did not.
+ */
+async function putFile(url, bytes, signal) {
+  try {
+    await putToStorage(url, bytes, { "x-ms-blob-type": "BlockBlob" }, signal);
+  } catch (err) {
+    if (err?.status === 403) return;
+    throw err;
+  }
 }
 
 /** The manifest, once every file it names is stored. Resolves with the upload row. */

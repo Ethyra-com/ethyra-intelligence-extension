@@ -73,6 +73,13 @@ const ETHYRA_MAX_FILE_BYTES = 50 * 1024 * 1024;
 const ETHYRA_MAX_TOTAL_BYTES = 10 * 1024 * 1024 * 1024;
 
 /**
+ * The one-zip fallback's cap, for a backend without per-file upload. Mirrors the
+ * backend's `MAX_UPLOAD_BYTES`: that route takes the whole archive in one
+ * request, so it is far below `ETHYRA_MAX_TOTAL_BYTES`.
+ */
+const ETHYRA_MAX_ZIP_BYTES = 500 * 1024 * 1024;
+
+/**
  * File types the backend stores but cannot read, so they are never sent.
  *
  * Mirrors `UNSUPPORTED` in the backend's `extraction.py`, which sniffs bytes:
@@ -135,6 +142,7 @@ if (typeof module !== "undefined" && module.exports) {
     ETHYRA_CONTENT_TYPES,
     ETHYRA_MAX_FILE_BYTES,
     ETHYRA_MAX_TOTAL_BYTES,
+    ETHYRA_MAX_ZIP_BYTES,
     ETHYRA_NOT_A_STUDENT,
     ETHYRA_UNREADABLE_EXTENSIONS,
   };

@@ -38,7 +38,7 @@
  * fatal — Canvas attachment URLs carry time-limited verifiers and one expiring
  * mid-export should cost that file, not the other two hundred.
  */
-async function buildArchive(files, manifest, { signal, onProgress = () => {} } = {}) {
+async function buildArchive(files, manifest, { signal, maxBytes = Infinity, onProgress = () => {} } = {}) {
   const total = files.length + 1;
   const failed = [];
   let completed = 0;
@@ -89,7 +89,28 @@ async function buildArchive(files, manifest, { signal, onProgress = () => {} } =
   }
 
   const response = downloadZip(source(), { buffersAreUTF8: true });
-  const blob = await response.blob();
+  // Read in chunks rather than `response.blob()`, so an archive that turns out
+  // bigger than the upload can take stops being built the moment it crosses
+  // the limit, instead of after all of it is held in memory. The sizes checked
+  // beforehand are Canvas's; this counts the real bytes, zip overhead and files
+  // with no reported size included.
+  const reader = response.body.getReader();
+  const chunks = [];
+  let built = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    built += value.byteLength;
+    if (built > maxBytes) {
+      await reader.cancel();
+      throw new Error(
+        `Your coursework is over the ${Math.round(maxBytes / (1024 * 1024))} MB this Ethyra server takes in one upload, ` +
+          "so nothing was uploaded. This is a limit on our side rather than anything you can change — please let Ethyra know."
+      );
+    }
+    chunks.push(value);
+  }
+  const blob = new Blob(chunks, { type: "application/zip" });
   console.info(`[Ethyra] Zip built: ${Math.round((blob.size / (1024 * 1024)) * 10) / 10} MB (${blob.size} bytes).`);
   onProgress({ phase: "archiving", completed, total, current: null });
   return { blob, failed };

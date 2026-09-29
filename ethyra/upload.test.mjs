@@ -134,9 +134,13 @@ test("a PUT that fails is retried on its own", async () => {
   assert.equal(puts(calls).length, 3);
 });
 
-test("an expired URL is not retried", async () => {
+test("a 403 (the file already there) is not retried and does not fail the export", async () => {
+  // Create-only URLs answer a second PUT of a stored file with 403. `complete`
+  // is what checks every file arrived, so an expired URL is caught there.
   const { sandbox, calls } = load((call) => (call.method === "PUT" ? { status: 403 } : backend()(call)));
-  await assert.rejects(send(sandbox, [file("a.txt", "alpha")]), /permission expired/);
+  const { failed, hashes } = await send(sandbox, [file("a.txt", "alpha")]);
+  assert.equal(failed.length, 0);
+  assert.ok(hashes.has("Algebra-1/Essay-2/a.txt"));
   assert.equal(puts(calls).length, 1);
 });
 
@@ -192,4 +196,76 @@ test("the token is asked for on every call, so a long export outlives the first 
 
   const auth = calls.filter((c) => c.headers.Authorization).map((c) => c.headers.Authorization);
   assert.deepEqual(auth, ["Bearer token-1", "Bearer token-2", "Bearer token-3"], "two /files batches, then complete");
+});
+
+test("an export over the cap stops before sending the batch that crosses it", async () => {
+  const { sandbox, calls } = load(backend());
+  const sender = sandbox.createFileSender({ apiUrl: API, accessToken: "t", maxTotalBytes: 12 });
+  // 8 files of 6 bytes each go in one batch: 48 bytes, over a 12-byte cap.
+  const files = Array.from({ length: 8 }, (_, i) => file(`f${i}.txt`, `body-${i}`));
+  await assert.rejects(
+    sender.sendCourse({ course: "Algebra", files, index: 0, total: 1 }),
+    /over Ethyra's .* limit, so the export stopped at Algebra\. What was already sent is kept/
+  );
+  assert.equal(puts(calls).length, 0, "nothing in the crossing batch is sent");
+  assert.equal(calls.length, 0, "not even asked about");
+});
+
+test("files skipped as already sent still count toward the cap", async () => {
+  const { sandbox } = load(backend([sha("alpha"), sha("beta")]));
+  // "alpha" (5) + "beta" (4) is 9 bytes, over 8, though neither is sent.
+  const sender = sandbox.createFileSender({ apiUrl: API, accessToken: "t", maxTotalBytes: 8 });
+  await sender.sendCourse({ course: "A", files: [file("a.txt", "alpha")], index: 0, total: 2 });
+  await assert.rejects(
+    sender.sendCourse({ course: "B", files: [file("b.txt", "beta")], index: 1, total: 2 }),
+    /stopped at B/
+  );
+});
+
+test("a network failure after /files has worked is retried, never a switch to one zip", async () => {
+  let dropped = 0;
+  let asked = 0;
+  const { sandbox, calls } = load((call) => {
+    if (call.url.endsWith("/files") && ++asked === 2 && dropped++ < 2) {
+      asked--; // the dropped attempts do not count as the second request
+      return { throws: new TypeError("Failed to fetch") };
+    }
+    return backend()(call);
+  });
+  const sender = sandbox.createFileSender({ apiUrl: API, accessToken: "t" });
+  await sender.sendCourse({ course: "A", files: [file("a.txt", "alpha")], index: 0, total: 2 });
+  const { hashes } = await sender.sendCourse({ course: "B", files: [file("b.txt", "beta")], index: 1, total: 2 });
+
+  assert.equal(sender.mode, "files", "the route exists; an outage is not a reason to zip");
+  assert.ok(hashes.has("Algebra-1/Essay-2/b.txt"));
+  assert.equal(calls.filter((c) => c.url.endsWith("/files")).length, 4, "one, then two dropped, then the retry");
+  assert.equal(puts(calls).length, 2);
+});
+
+test("a 404 after /files has worked is an error, not a fallback", async () => {
+  let asked = 0;
+  const { sandbox } = load((call) =>
+    call.url.endsWith("/files") && ++asked > 1 ? { status: 404, json: { detail: "Not Found" } } : backend()(call)
+  );
+  const sender = sandbox.createFileSender({ apiUrl: API, accessToken: "t" });
+  await sender.sendCourse({ course: "A", files: [file("a.txt", "alpha")], index: 0, total: 2 });
+  await assert.rejects(
+    sender.sendCourse({ course: "B", files: [file("b.txt", "beta")], index: 1, total: 2 }),
+    /Not Found/
+  );
+  assert.equal(sender.mode, "files");
+});
+
+test("an outage that outlasts the retries fails the export with the backend unreachable", async () => {
+  let asked = 0;
+  const { sandbox } = load((call) =>
+    call.url.endsWith("/files") && ++asked > 1 ? { throws: new TypeError("Failed to fetch") } : backend()(call)
+  );
+  const sender = sandbox.createFileSender({ apiUrl: API, accessToken: "t" });
+  await sender.sendCourse({ course: "A", files: [file("a.txt", "alpha")], index: 0, total: 2 });
+  await assert.rejects(
+    sender.sendCourse({ course: "B", files: [file("b.txt", "beta")], index: 1, total: 2 }),
+    /Could not reach Ethyra/
+  );
+  assert.equal(sender.mode, "files");
 });

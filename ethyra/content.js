@@ -157,8 +157,13 @@ if (isCanvas()) {
       // Each course's files go to Ethyra as soon as that course is collected,
       // while its Canvas download links are fresh, and only the ones this
       // student has never sent. See `createFileSender`.
-      const sender = createFileSender({ apiUrl, accessToken, onProgress: report });
-      const { manifest, files, warnings } = await collectExport({
+      const sender = createFileSender({
+        apiUrl,
+        accessToken,
+        maxTotalBytes: ETHYRA_MAX_TOTAL_BYTES,
+        onProgress: report,
+      });
+      const { manifest, files, warnings, totalBytes } = await collectExport({
         origin,
         extensionVersion,
         onProgress: report,
@@ -171,9 +176,23 @@ if (isCanvas()) {
 
       let upload;
       if (sender.mode === "zip") {
-        // A backend without the per-file routes: one archive, one request.
+        // A backend without the per-file routes: one archive, one request, and
+        // that route's far smaller cap. Refused before anything is fetched when
+        // Canvas's sizes already say it will not fit; `buildArchive` enforces
+        // the same cap on the real bytes as it builds.
+        const mb = Math.round(ETHYRA_MAX_ZIP_BYTES / (1024 * 1024));
+        if (totalBytes > ETHYRA_MAX_ZIP_BYTES) {
+          throw new Error(
+            `Your coursework comes to about ${Math.round(totalBytes / (1024 * 1024))} MB, over the ${mb} MB ` +
+              "this Ethyra server takes in one upload, so nothing was uploaded. " +
+              "This is a limit on our side rather than anything you can change — please let Ethyra know."
+          );
+        }
         report({ phase: "archiving", completed: 0, total: files.length + 1 });
-        const { blob, failed } = await buildArchive(files, manifest, { onProgress: report });
+        const { blob, failed } = await buildArchive(files, manifest, {
+          maxBytes: ETHYRA_MAX_ZIP_BYTES,
+          onProgress: report,
+        });
         if (failed.length) {
           warnings.push(`${failed.length} file(s) could not be downloaded from Canvas and were left out.`);
         }

@@ -90,7 +90,7 @@ mid-export is ordinary.
 **Each file goes straight to blob storage, once.** A student with every past
 course has 1-2 GB of work, most of it sent last time. As each course is
 collected, its files are fetched a few at a time, hashed (SHA-256), and
-`POST /api/act/uploads/files` answers with a write URL for each file this
+`POST /api/act/uploads/files` answers with a create-only URL for each file this
 student has never sent; only those are PUT. `POST /api/act/uploads/complete`
 then sends the manifest, every file named by its hash. Files live in the
 student's own store (`{user}/files/{sha256}`), so a re-export sends almost

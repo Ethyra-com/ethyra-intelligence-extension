@@ -130,6 +130,7 @@ const REQUIRED = [
   ["ETHYRA_MAX_FILE_BYTES", "ethyra/profile.js", "ethyra/collect.js"],
   ["ETHYRA_UNREADABLE_EXTENSIONS", "ethyra/profile.js", "ethyra/collect.js"],
   ["ETHYRA_MAX_TOTAL_BYTES", "ethyra/profile.js", "ethyra/collect.js"],
+  ["ETHYRA_MAX_ZIP_BYTES", "ethyra/profile.js", "ethyra/content.js"],
   ["collectExport", "ethyra/collect.js", "ethyra/content.js"],
   ["buildArchive", "ethyra/archive.js", "ethyra/content.js"],
   ["createFileSender", "ethyra/upload.js", "ethyra/content.js"],
@@ -1277,4 +1278,22 @@ test("a running export gets a fresh token from the worker, and nothing else can"
   assert.match(block.slice(0, 400), /status !== "running"/, "tokens only while an export runs");
   assert.match(block.slice(0, 400), /getAccessToken\(\)/, "refreshed where the refresh token is");
   assert.match(content, /type: "ETHYRA_GET_TOKEN"/);
+});
+
+test("the cap is enforced as files are sent, not after they all have been", () => {
+  const content = code("ethyra/content.js");
+  const collect = code("ethyra/collect.js");
+  assert.match(content, /maxTotalBytes: ETHYRA_MAX_TOTAL_BYTES/, "the sender is given the cap");
+  // The end-of-export check would say "nothing was uploaded" after the files
+  // went up; it is only for the one-zip fallback, where that is true.
+  assert.match(collect, /if \(!sentPerFile && totalBytes > ETHYRA_MAX_TOTAL_BYTES\)/);
+});
+
+test("the one-zip fallback is held to its own 500 MB cap, before and while building", () => {
+  const content = code("ethyra/content.js");
+  const zip = content.slice(content.indexOf('if (sender.mode === "zip")'));
+  // Checked on Canvas's sizes before a single file is fetched...
+  assert.ok(zip.indexOf("totalBytes > ETHYRA_MAX_ZIP_BYTES") < zip.indexOf("buildArchive("));
+  // ...and on the real bytes while the archive is built.
+  assert.match(zip, /maxBytes: ETHYRA_MAX_ZIP_BYTES/);
 });

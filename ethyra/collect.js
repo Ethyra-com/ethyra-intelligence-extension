@@ -176,6 +176,9 @@ async function collectExport({ origin, extensionVersion, onProgress = () => {}, 
   const files = [];
   const manifestCourses = [];
   const warnings = [];
+  // Set once any course went up file by file. The sender enforced the cap as it
+  // went, so the check at the end is only for the one-zip fallback.
+  let sentPerFile = false;
 
   for (const [index, course] of courses.entries()) {
     onProgress({ phase: "collecting", course: course.name, index, total: courses.length });
@@ -285,6 +288,7 @@ async function collectExport({ origin, extensionVersion, onProgress = () => {}, 
         total: courses.length,
       });
       if (hashes) {
+        sentPerFile = true;
         for (const a of courseEntry.assignments) {
           for (const f of a.files) Object.assign(f, hashes.get(f.path) || {});
         }
@@ -335,7 +339,7 @@ async function collectExport({ origin, extensionVersion, onProgress = () => {}, 
   // worse than admitting the limit is ours to raise.
   const totalBytes = files.reduce((sum, f) => sum + (f.size || 0), 0);
   logExportSize(files, totalBytes);
-  if (totalBytes > ETHYRA_MAX_TOTAL_BYTES) {
+  if (!sentPerFile && totalBytes > ETHYRA_MAX_TOTAL_BYTES) {
     const mb = Math.round(totalBytes / (1024 * 1024));
     const limit = Math.round(ETHYRA_MAX_TOTAL_BYTES / (1024 * 1024));
     throw new Error(
