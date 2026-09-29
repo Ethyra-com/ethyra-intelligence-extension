@@ -106,4 +106,4 @@ afterwards, so no later change can forget it:
 asked for, and `ethyra/manifest.js` has no field to carry them if they arrived.
 `ethyra/wiring.test.mjs` fails if either changes.
 
-PRIVACY.md is the student-facing version of this list and must agree with it.
+LEGAL.md is the student-facing version of this list and must agree with it.

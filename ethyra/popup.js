@@ -70,7 +70,7 @@ const ANALYSIS_STARTUP_POLLS = 30;
  * Inheriting that match pattern meant Chrome injecting this entire bundle into
  * every HTTPS page: banking, email, everything. Nothing ran — `content.js` is
  * one big `if (isCanvas())` — but "nothing ran" is a promise kept by a runtime
- * guard, and PRIVACY.md makes the stronger claim that the extension does not run
+ * guard, and LEGAL.md makes the stronger claim that the extension does not run
  * on non-Canvas sites at all.
  *
  * Narrowing the pattern to `*.instructure.com` would have made that claim true
@@ -78,7 +78,7 @@ const ANALYSIS_STARTUP_POLLS = 30;
  * declaration goes away instead: `activeTab` grants this popup temporary access
  * to the one tab the student had open when they clicked the toolbar icon, for
  * ANY host, and nothing is injected anywhere until that click. The permission
- * table in PRIVACY.md already described this mechanism; now it is the mechanism.
+ * table in LEGAL.md already described this mechanism; now it is the mechanism.
  */
 const CONTENT_SCRIPTS = [
   "client-zip.min.js",
