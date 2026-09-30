@@ -2,7 +2,7 @@
 <html lang="en">
   <head>
     <meta charset="utf-8" />
-    <title>Ethyra Intelligence</title>
+    <title>Ethyra Canvas Export</title>
     <!-- The theme lives in its own file rather than a <style> block: it is a
          copy of the frontend's tokens and auth controls, and keeping it as CSS
          means a change over there can be diffed against this. -->
@@ -11,6 +11,52 @@
   <body>
     <h1 class="lp-brand">Ethyra</h1>
     <p class="lp-sub" id="subtitle">Export your Canvas coursework for analysis.</p>
+
+    <!-- Before anything else: what the extension collects, and an explicit
+         agreement to it. The Chrome Web Store requires this inside the
+         extension, before any data is collected, and sign-in collects the email
+         and password. Every line here must agree with LEGAL.md. The agreement is
+         recorded by the worker (`ETHYRA_ACCEPT_CONSENT`), which refuses
+         sign-in, sign-up and export without it. -->
+    <section id="view-consent" hidden>
+      <p class="lp-body" style="margin-top: 0"><strong>Before you start</strong>, here is what this extension does with your data.</p>
+      <ul class="lp-consent">
+        <li>
+          <strong>Signing in</strong> sends your email and password to Ethyra. The
+          extension then keeps a sign-in token in this browser, so you do not have
+          to sign in for every export.
+        </li>
+        <li>
+          <strong>When you click Export</strong>, it reads from Canvas, for every
+          course where you are a student, current and past: the files and text you
+          submitted, each assignment's instructions and rubric, files your
+          instructor attached, due and submission dates, your own grades, course
+          names, and your name.
+        </li>
+        <li>
+          That is <strong>uploaded to Ethyra and analyzed by AI</strong> to build
+          your learning profile against the ACT College and Career Readiness
+          Standards.
+        </li>
+        <li>
+          <strong>It never reads</strong> instructor comments, rubric marks, class
+          averages, other students' work, course materials, your Canvas password,
+          or your browsing.
+        </li>
+      </ul>
+      <p class="lp-body">
+        Details are in the
+        <a class="lp-auth-link" href="https://ethyra.com/privacy" target="_blank" rel="noopener">Privacy Policy</a>
+        and
+        <a class="lp-auth-link" href="https://ethyra.com/terms" target="_blank" rel="noopener">Terms of Service</a>.
+      </p>
+      <label class="lp-check" for="consent-check">
+        <input id="consent-check" type="checkbox" />
+        <span>I understand and agree to Ethyra collecting and using my data as described above.</span>
+      </label>
+      <button class="lp-auth-submit" id="consent-agree" disabled>Agree</button>
+      <p class="lp-auth-error" id="consent-error" hidden></p>
+    </section>
 
     <!-- Not on a Canvas page -->
     <section id="view-not-canvas" hidden>
@@ -33,7 +79,7 @@
       <button class="lp-auth-submit" id="signin">Sign in</button>
       <p class="lp-auth-error" id="signin-error" hidden></p>
       <p class="lp-auth-hint">
-        Uses your Ethyra Intelligence account — the same one as the web app.
+        Uses your Ethyra account — the same one as the web app.
       </p>
       <p class="lp-auth-hint">
         No account yet? <a class="lp-auth-link" id="go-signup">Create one</a>

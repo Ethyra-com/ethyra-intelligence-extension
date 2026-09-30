@@ -1,7 +1,7 @@
-# Ethyra Intelligence — Canvas Export
+# Ethyra Canvas Export
 
 A Chrome extension that sends a student's own Canvas coursework to
-[Ethyra Intelligence](https://ethyra.com), where it is analysed against the ACT
+[Ethyra](https://ethyra.com), where it is analysed against the ACT
 College and Career Readiness Standards to build a learning profile.
 
 Sign in, click **Export**, done. There is no course picker, no settings, and no
@@ -123,6 +123,26 @@ The backend must allow your Canvas origin. The upload comes from the Canvas page
 not from the extension, so add self-hosted Canvas hosts to `CANVAS_ORIGINS` in
 the backend's environment — `*.instructure.com` is already matched by pattern.
 
+## Package for the Chrome Web Store
+
+```bash
+node scripts/package.mjs
+```
+
+Writes `dist/ethyra-canvas-export-<version>.zip`. Upload that, never a zip of this
+directory. The script:
+
+- removes the dev hosts (`localhost`, the Azure dev backend) from the manifest's
+  `host_permissions`, and fails if any host other than Canvas and
+  `api.ethyra.com` is left;
+- leaves out everything that doesn't run: `dev/`, `tests/`, `screenshots/`,
+  `.github/`, `_metadata/`, tests, markdown docs, and the upstream files nothing
+  loads (see [NOTICE](NOTICE));
+- keeps `LICENSE` and `NOTICE`, which the MIT licence requires.
+
+Bump `version` in `manifest.json` before every upload; the store refuses a
+version that isn't higher than the last one.
+
 ## Tests
 
 ```bash
@@ -146,7 +166,6 @@ No dependencies and no browser. Two suites:
       and `submission_history` come back to a *student* varies with instance
       policy and muted assignments. Everything degrades gracefully if they do
       not, but the value proposition changes.
-- [ ] **Branding.** `icons/` is still upstream's artwork.
 - [ ] **Publish [LEGAL.md](LEGAL.md) on the website.** Its privacy page URL is
       what the Chrome Web Store listing points to. See
       [CHROME_WEB_STORE.md](CHROME_WEB_STORE.md) for the rest of submission.

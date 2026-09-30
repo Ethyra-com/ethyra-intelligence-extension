@@ -312,29 +312,141 @@ test("the service worker imports the auth module it uses", () => {
   }
 });
 
-test("a release build carries no local-development host permission", (t) => {
-  // `http://localhost:8001/*` is here so a developer can point the extension at
-  // a backend on their own machine. A service-worker fetch to a host in
-  // `host_permissions` is exempt from CORS; without the entry, sign-in from the
-  // worker carries `Origin: chrome-extension://…`, which the backend does not
-  // admit on `/api/auth/*` — correctly, since that is the same door it keeps
-  // shut against Canvas origins.
+test("the packaged release carries only production hosts and runtime files", async () => {
+  // The working tree keeps `http://localhost:8001/*` and the Azure dev backend
+  // so a developer can point "Load unpacked" at them: a service-worker fetch to
+  // a host in `host_permissions` is exempt from CORS, and without the entry
+  // sign-in from the worker is refused on `/api/auth/*`.
   //
-  // It must not ship. A published extension holding a localhost permission can
-  // reach whatever happens to be listening on that port on a reviewer's machine
-  // or a student's, which is both a Web Store review finding and true.
-  //
-  // Gated on the version for the same reason as the privacy placeholders: the
-  // store requires a bump on every submission, so it is the one thing that
-  // cannot be forgotten on the way out.
-  const local = manifest.host_permissions.filter((o) => /localhost|127\.0\.0\.1/.test(o));
+  // They must not ship — a published extension holding a localhost permission
+  // can reach whatever listens on that port on a reviewer's machine or a
+  // student's (Web Store rejection code Purple Potassium). So the store zip is
+  // built by `scripts/package.mjs`, never zipped by hand, and this checks what
+  // it would produce.
+  const { buildPackage, UPSTREAM_UNLOADED } = await import("../scripts/package.mjs");
+  const { files } = buildPackage();
+  const release = JSON.parse(files.get("manifest.json").toString("utf8"));
 
-  if (manifest.version.startsWith("0.")) {
-    if (local.length) t.diagnostic(`${local.join(", ")} present for local dev — blocking at version 1.0.0`);
-    return;
+  assert.deepEqual(release.host_permissions, [
+    "*://*.instructure.com/*",
+    "*://*.canvas-user-content.com/*",
+    "https://api.ethyra.com/*",
+  ]);
+  // Only the hosts changed.
+  assert.deepEqual({ ...release, host_permissions: null }, { ...manifest, host_permissions: null });
+
+  // Everything the extension loads is in it...
+  const needed = [
+    release.background.service_worker,
+    "ethyra/auth.js",
+    release.action.default_popup,
+    "ethyra/popup.css",
+    "rules.json",
+    "LICENSE", // the MIT licence requires it
+    ...Object.values(release.icons),
+    ...scripts,
+  ];
+  for (const file of needed) assert.ok(files.has(file), `${file} is missing from the package`);
+
+  // ...and nothing that is not runtime.
+  for (const name of files.keys()) {
+    assert.ok(!/^(dev|tests|screenshots|scripts|dist|\.github|_metadata)\//.test(name), `${name} is not runtime`);
+    assert.ok(!/\.test\.mjs$|\.md$|\.DS_Store$/.test(name), `${name} is not runtime`);
+  }
+  for (const file of UPSTREAM_UNLOADED) {
+    assert.ok(!files.has(file), `${file} is loaded by nothing and must not ship`);
+    assert.ok(!scripts.includes(file), `${file} is injected, so it cannot be left out of the package`);
+  }
+});
+
+test("the extension is named Ethyra Canvas Export everywhere a student sees it", () => {
+  // The listing, the extension and LEGAL.md must describe the same product.
+  assert.equal(manifest.name, "Ethyra Canvas Export");
+  assert.equal(manifest.action.default_title, "Ethyra Canvas Export");
+  // The manifest description is the store summary, capped at 132 characters.
+  assert.ok(manifest.description.length <= 132, `description is ${manifest.description.length} characters`);
+  for (const file of ["manifest.json", "ethyra/popup.html", "ethyra/popup.js", "ethyra/background.js", "NOTICE"]) {
+    assert.ok(!/Ethyra Intelligence/.test(read(file)), `${file} still says "Ethyra Intelligence"`);
+  }
+  assert.match(read("LEGAL.md"), /Ethyra Canvas Export/);
+});
+
+test("the consent screen comes first, and nothing collects data without it", () => {
+  const html = read(manifest.action.default_popup);
+  const popup = code("ethyra/popup.js");
+  // Raw: see the note in the sign-up test on `code()` and background.js.
+  const sw = read(manifest.background.service_worker);
+
+  // Chrome Web Store rejection code Purple Nickel: disclosure and an explicit
+  // agree inside the extension, before any data is collected. Sign-in collects
+  // the email and password, so the screen precedes the auth forms.
+  const consent = html.indexOf('id="view-consent"');
+  assert.ok(consent !== -1, "there is no consent view");
+  for (const view of ["view-signin", "view-signup", "view-ready"]) {
+    assert.ok(consent < html.indexOf(`id="${view}"`), `the consent view must come before ${view}`);
   }
 
-  assert.deepEqual(local, [], "remove the localhost host permission before releasing");
+  // What it must say, per CHROME_WEB_STORE.md.
+  const screen = html.slice(consent, html.indexOf("</section>", consent));
+  for (const [what, pattern] of [
+    ["sign-in credentials", /email and password/],
+    ["the stored token", /sign-in token/],
+    ["what is read", /files and text you\s+submitted/],
+    ["grades", /your own grades/],
+    ["upload and AI", /uploaded to Ethyra and analyzed by AI/],
+    ["what is not read", /never reads/],
+    ["privacy link", /href="https:\/\/ethyra\.com\/privacy"/],
+    ["terms link", /href="https:\/\/ethyra\.com\/terms"/],
+  ]) {
+    assert.match(screen, pattern, `the consent screen does not mention ${what}`);
+  }
+
+  // A deliberate action: a checkbox, and an Agree button off until it is ticked.
+  assert.match(screen, /id="consent-check"[^>]*type="checkbox"/);
+  assert.match(screen, /id="consent-agree"[^>]*disabled/);
+  assert.match(popup, /consent-agree"\]\.disabled = !els\["consent-check"\]\.checked/);
+  assert.match(popup, /ETHYRA_ACCEPT_CONSENT/);
+
+  // A failed save is shown, and Agree comes back so the student can retry;
+  // boot() runs only after the worker confirms the write.
+  assert.match(screen, /id="consent-error"/);
+  const agree = popup.slice(popup.indexOf('els["consent-agree"].addEventListener'));
+  const handler = agree.slice(0, agree.indexOf("\n});") );
+  assert.match(handler, /if \(!result\?\.ok\) throw/, "a failed consent write is ignored");
+  assert.match(handler, /catch \(err\)[\s\S]*fail\(els\["consent-error"\]/, "a failed consent write is not shown");
+  assert.match(handler, /catch \(err\)[\s\S]*consent-agree"\]\.disabled = /, "Agree stays disabled after a failure");
+  assert.ok(handler.indexOf("await boot()") > handler.indexOf("result?.ok"), "boot() runs before the write is confirmed");
+
+  // boot() asks before sign-in or the ready view — which is what reaches
+  // students already signed in before this screen existed.
+  const boot = popup.slice(popup.indexOf("async function boot()"));
+  const gate = boot.indexOf("if (!session?.consented)");
+  assert.ok(gate !== -1, "boot() never checks consent");
+  assert.ok(gate < boot.indexOf('show("signin")'), "sign-in is reachable before consent");
+  assert.ok(gate < boot.indexOf("await showReady(session)"), "export is reachable before consent");
+
+  // Recorded with a version, so a policy change can ask again.
+  assert.match(sw, /const CONSENT_VERSION = "[^"]+"/);
+  assert.match(sw, /\[CONSENT_KEY\]: \{ version: CONSENT_VERSION/);
+  assert.match(sw, /stored\[CONSENT_KEY\]\?\.version === CONSENT_VERSION/);
+});
+
+test("the worker refuses sign-in, sign-up and export without recorded consent", () => {
+  // The backstop. Not left to the server: `upload.js` swallows a 403 in one
+  // step, so a server-side refusal would not reliably stop an export.
+  const sw = read(manifest.background.service_worker);
+  for (const type of ["ETHYRA_SIGN_IN", "ETHYRA_SIGN_UP", "ETHYRA_BEGIN_EXPORT"]) {
+    const start = sw.indexOf(`case "${type}"`);
+    assert.ok(start !== -1, `${type} is not handled`);
+    const body = sw.slice(start, sw.indexOf("case ", start + 1));
+    const check = body.indexOf("if (!(await hasConsent()))");
+    assert.ok(check !== -1, `${type} does not check consent`);
+    // Before anything is minted, sent or written.
+    for (const act of ["getAccessToken(", "signIn(", "signUp(", "writeExportState("]) {
+      const at = body.indexOf(act);
+      if (at !== -1) assert.ok(check < at, `${type} calls ${act} before checking consent`);
+    }
+  }
 });
 
 test("sign-up is wired end to end, and asks for consent rather than assuming it", () => {

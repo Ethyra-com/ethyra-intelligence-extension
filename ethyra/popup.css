@@ -344,6 +344,23 @@ body {
   transition: width 0.2s;
 }
 
+.lp-consent {
+  margin: 0.6rem 0 0;
+  padding-left: 1rem;
+  color: var(--lp-muted);
+  font-size: 0.72rem;
+  line-height: 1.45;
+}
+
+.lp-consent li + li {
+  margin-top: 0.4rem;
+}
+
+.lp-consent strong,
+.lp-body strong {
+  color: var(--lp-fg);
+}
+
 .lp-warnings {
   margin: 0.8rem 0 0;
   padding-left: 1rem;
