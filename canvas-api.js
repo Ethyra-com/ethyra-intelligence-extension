@@ -20,7 +20,11 @@ async function fetchWithRetry(url, options = {}, retries = MAX_RETRIES) {
   for (let attempt = 0; attempt <= retries; attempt++) {
     try {
       const res = await fetchWithTimeout(url, options);
-      if (res.ok || (res.status < 500 && res.status !== 429)) return res;
+      // Ethyra fork: Canvas throttles a session that asks too fast with a 403
+      // whose body says "Rate Limit Exceeded" — not a 429. Courses are read
+      // side by side, so this is reachable; it is a wait, not a refusal.
+      const throttled = res.status === 403 && (await isRateLimited(res));
+      if (!throttled && (res.ok || (res.status < 500 && res.status !== 429))) return res;
       if (attempt === retries) return res;
       const delay = Math.min(1000 * 2 ** attempt, 8000);
       console.warn(`[Canvas Downloader] ${res.status} on ${url}, retrying in ${delay}ms...`);
@@ -31,6 +35,43 @@ async function fetchWithRetry(url, options = {}, retries = MAX_RETRIES) {
       console.warn(`[Canvas Downloader] Fetch error on ${url}, retrying in ${delay}ms...`);
       await new Promise((r) => setTimeout(r, delay));
     }
+  }
+}
+
+/** How long, and how far, the throttling check reads a 403's body. */
+const RATE_LIMIT_READ_MS = 5000;
+const RATE_LIMIT_READ_BYTES = 4096;
+
+/**
+ * True for Canvas's throttling 403, which says so in its body.
+ *
+ * Bounded in time and size. `fetchWithTimeout`'s deadline ends when the headers
+ * arrive, so an unbounded read of a body that stalls would hang the course, and
+ * with it the export. A read that runs out of either is cancelled and counts as
+ * "not throttled", which is what the 403 meant before this check existed.
+ */
+async function isRateLimited(res) {
+  const reader = res.clone().body?.getReader();
+  if (!reader) return false;
+  const timer = setTimeout(() => reader.cancel().catch(() => {}), RATE_LIMIT_READ_MS);
+  const decoder = new TextDecoder();
+  let text = "";
+  let bytes = 0;
+  try {
+    while (bytes < RATE_LIMIT_READ_BYTES) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      // A single chunk can be any size, so only what fits the budget is decoded.
+      const part = value.subarray(0, RATE_LIMIT_READ_BYTES - bytes);
+      bytes += part.byteLength;
+      text += decoder.decode(part, { stream: true });
+    }
+    return /rate limit exceeded/i.test(text);
+  } catch {
+    return false;
+  } finally {
+    clearTimeout(timer);
+    reader.cancel().catch(() => {});
   }
 }
 

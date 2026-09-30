@@ -1139,7 +1139,7 @@ test("a course the user teaches is rejected before anything is fetched from it",
   // And the skip must read as a skip.
   const collect = read("ethyra/collect.js");
   assert.match(collect, /ETHYRA_NOT_A_STUDENT/, "collect.js must recognise the code");
-  const branch = collect.match(/ETHYRA_NOT_A_STUDENT\)[\s\S]{0,400}?continue;/);
+  const branch = collect.match(/ETHYRA_NOT_A_STUDENT\)[\s\S]{0,400}?return result;/);
   assert.ok(branch, "the skip branch moved or was renamed");
   assert.ok(
     !/could not be collected/.test(branch[0]),
@@ -1374,9 +1374,9 @@ test("each course is sent as it is collected, and its manifest lines carry the h
   const collect = code("ethyra/collect.js");
   const content = code("ethyra/content.js");
 
-  // Inside the course loop, before the next course is read: links are fresh and
-  // nothing waits for the whole export.
-  const loop = collect.slice(collect.indexOf("for (const [index, course] of courses.entries())"));
+  // Inside the per-course step, before the export is assembled: links are fresh
+  // and nothing waits for the whole export.
+  const loop = collect.slice(collect.indexOf("async function collectCourse(course)"));
   assert.ok(loop.indexOf("sendCourse(") > 0 && loop.indexOf("sendCourse(") < loop.indexOf("buildManifest("));
   assert.match(collect, /Object\.assign\(f, hashes\.get\(f\.path\)/, "manifest files must be named by hash");
   assert.match(content, /sendCourse: sender\.sendCourse/);

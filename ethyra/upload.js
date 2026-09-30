@@ -69,6 +69,33 @@ function createFileSender({ apiUrl, accessToken, signal, maxTotalBytes = Infinit
   // what the upload will contain, and a skipped file is in it too.
   const sender = { mode: "files", confirmed: false, sent: 0, skipped: 0, bytes: 0, sendCourse };
 
+  /**
+   * The first `/files` request, while it is out.
+   *
+   * Courses are sent side by side (see `collectExport`), and until one request
+   * has succeeded each could fall back to the zip on its own. Two courses
+   * reaching different answers would leave an export half sent per file and
+   * half zipped. So the undecided requests go one at a time: the rest wait for
+   * this one, then either follow the zip or ask as a confirmed sender would.
+   */
+  let probe = null;
+
+  async function fileUrls(files) {
+    while (!sender.confirmed && probe) await probe.catch(() => {});
+    if (sender.mode === "zip") return null;
+    if (sender.confirmed) return requestFileUrls({ apiUrl, accessToken, signal, files, mayFallBack: false });
+
+    probe = requestFileUrls({ apiUrl, accessToken, signal, files, mayFallBack: true });
+    try {
+      const urls = await probe;
+      if (urls === null) sender.mode = "zip";
+      else sender.confirmed = true;
+      return urls;
+    } finally {
+      probe = null;
+    }
+  }
+
   async function sendCourse({ course, files, index, total }) {
     const hashes = new Map();
     const failed = [];
@@ -108,12 +135,8 @@ function createFileSender({ apiUrl, accessToken, signal, maxTotalBytes = Infinit
       }
       sender.bytes += batchBytes;
 
-      const urls = await requestFileUrls({ apiUrl, accessToken, signal, files: ok, mayFallBack: !sender.confirmed });
-      if (urls === null) {
-        sender.mode = "zip";
-        return { failed: [], hashes: null };
-      }
-      sender.confirmed = true;
+      const urls = await fileUrls(ok);
+      if (urls === null) return { failed: [], hashes: null };
 
       await mapLimit(ok, FILE_CONCURRENCY, async (f) => {
         hashes.set(f.path, { sha256: f.sha256, size: f.bytes.byteLength });

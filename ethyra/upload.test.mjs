@@ -269,3 +269,48 @@ test("an outage that outlasts the retries fails the export with the backend unre
   );
   assert.equal(sender.mode, "files");
 });
+
+// ── Courses sent side by side ────────────────────────────────────────────
+
+test("until one course is confirmed, the others wait, and a zip answer holds for all", async () => {
+  // `collectExport` sends several courses at once. Each asking on its own could
+  // leave an export half per-file and half zipped.
+  const { sandbox, calls } = load(async (call) => {
+    if (call.url.endsWith("/files")) {
+      await new Promise((r) => setImmediate(r));
+      return { status: 501 };
+    }
+    return backend()(call);
+  });
+  const sender = sandbox.createFileSender({ apiUrl: API, accessToken: "t" });
+  const results = await Promise.all(
+    ["Algebra", "Biology", "Chemistry"].map((course, index) =>
+      sender.sendCourse({ course, files: [file(`${course}.txt`, course)], index, total: 3 })
+    )
+  );
+  assert.equal(calls.filter((c) => c.url.endsWith("/files")).length, 1, "only one course asked");
+  assert.ok(results.every((r) => r.hashes === null), "every course follows the zip");
+  assert.equal(sender.mode, "zip");
+});
+
+test("the first request is answered before the next course asks, then they run freely", async () => {
+  const order = [];
+  const { sandbox } = load(async (call, calls) => {
+    if (call.url.endsWith("/files")) {
+      const n = calls.filter((c) => c.url.endsWith("/files")).length;
+      order.push(`ask ${n}`);
+      await new Promise((r) => setImmediate(r));
+      order.push(`answer ${n}`);
+    }
+    return backend()(call);
+  });
+  const sender = sandbox.createFileSender({ apiUrl: API, accessToken: "t" });
+  const results = await Promise.all(
+    ["Algebra", "Biology", "Chemistry"].map((course, index) =>
+      sender.sendCourse({ course, files: [file(`${course}.txt`, course)], index, total: 3 })
+    )
+  );
+  assert.deepEqual(order.slice(0, 2), ["ask 1", "answer 1"], "nobody asked while the first was out");
+  assert.ok(results.every((r) => r.hashes?.size === 1), "every course went up per file");
+  assert.equal(sender.sent, 3);
+});
