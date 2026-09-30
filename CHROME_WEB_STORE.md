@@ -9,12 +9,12 @@ confirm them in the dashboard.
 
 | # | Blocker | Why | Rejection code |
 |---|---|---|---|
-| 1 | ✅ **Done** (`view-consent` in the popup; the worker refuses without it). **Consent screen inside the extension**, before sign-up or sign-in, so it comes before any data is collected (credentials as well as coursework) | Disclosure "must not be located only in a privacy policy, terms of service, or similar document" and "must occur within the Product's user interface", with an explicit agree action. **Timing:** the [disclosure requirements](https://developer.chrome.com/docs/webstore/program-policies/disclosure-requirements) page says "prior to installation", but the [User Data FAQ](https://developer.chrome.com/docs/webstore/program-policies/user-data-faq) (Q10) says disclosures in the store description or install page "do not satisfy this requirement". Our reading is that the in-extension screen, shown before any data is collected, is what counts. So there is no separate pre-install consent step, but the listing description should still state what data is collected, and must match the Privacy practices answers shown on the listing. The popup's sign-up checkbox (`ethyra/popup.html`) doesn't cover existing users who sign in. Its links to `ethyra.com/terms` and `/privacy` are already the URLs `LEGAL.md` targets. | Purple Nickel |
+| 1 | ✅ **Done** (`view-consent` in the popup; the worker refuses without it). **Consent screen inside the extension**, before sign-up or sign-in, so it comes before any data is collected (credentials as well as coursework) | Disclosure "must not be located only in a privacy policy, terms of service, or similar document" and "must occur within the Product's user interface", with an explicit agree action. **Timing:** the [disclosure requirements](https://developer.chrome.com/docs/webstore/program-policies/disclosure-requirements) page says "prior to installation", but the [User Data FAQ](https://developer.chrome.com/docs/webstore/program-policies/user-data-faq) (Q10) says disclosures in the store description or install page "do not satisfy this requirement". Our reading is that the in-extension screen, shown before any data is collected, is what counts. So there is no separate pre-install consent step, but the listing description should still state what data is collected, and must match the Privacy practices answers shown on the listing. The sign-up checkbox alone didn't cover existing users who sign in, which is why the consent screen is separate. Its links to `ethyra.com/terms` and `/privacy` are already the URLs `LEGAL.md` targets. | Purple Nickel |
 | 2 | ✅ **Done**: `scripts/package.mjs` strips them from the store zip. **Remove the dev hosts** from `manifest.json` `host_permissions`: `http://localhost:8001/*` and `https://intelligence-backend-…azurewebsites.net/*` | Every host must be justifiable in production | Purple Potassium |
-| 3 | **Publish `LEGAL.md` on the website** at `ethyra.com/privacy` and `/terms`. The privacy URL must load without signing in. | Required whenever an extension handles user data | Purple Lithium |
-| 4 | **Replace the icons and screenshots.** `icons/` and `screenshots/` are still upstream's artwork. | The listing must match the product | Yellow Zinc / impersonation |
+| 3 | ✅ **Done.** **Publish `LEGAL.md` on the website** at `ethyra.com/privacy` and `/terms`. The privacy URL must load without signing in. | Required whenever an extension handles user data | Purple Lithium |
+| 4 | ✅ **Done.** `icons/` is Ethyra's artwork. Store images are `screenshots/ethyra-*.png`; the other files in `screenshots/` are upstream's and must not be uploaded. | The listing must match the product | Yellow Zinc / impersonation |
 | 5 | **Increase `manifest.json` `version` on every upload** | The store rejects an upload whose version isn't higher than the one before it. The first upload can be any version, and staying in `0.x` is allowed. Separately, `wiring.test.mjs` fails any version outside `0.x` while `LEGAL.md` still contains `[TODO]` placeholders (it has none today). | none |
-| 6 | ✅ **Done.** **Rename the extension to match the policy.** `manifest.json` `name`, `description` and `action.default_title`, and the popup, still say "Ethyra Intelligence"; The policy (`LEGAL.md`) calls it "Ethyra Canvas Export". | The listing, the extension and the policy must describe the same product | Yellow Zinc |
+| 6 | ✅ **Done.** The manifest (`name`, `description`, `action.default_title`) and the popup now use "Ethyra Canvas Export", matching `LEGAL.md`. | The listing, the extension and the policy must describe the same product | Yellow Zinc |
 | 7 | **Create a reviewer test account** (see [Test instructions](#test-instructions)) | Reviewers who can't sign in or reach Canvas reject the item as not working | Yellow Magnesium |
 
 Sources:
@@ -87,12 +87,12 @@ It must be the popup's first screen, shown before the sign-up and sign-in forms,
 
 | Item | Requirement | Status |
 |---|---|---|
-| Summary | 132 characters max; taken from the manifest `description` | Fits; drop "Intelligence" (blocker 6) |
+| Summary | 132 characters max; taken from the manifest `description` | Done: 112 characters |
 | Description | Required. No keyword stuffing (same keyword more than 5 times). | To write |
-| Store icon | 128×128 PNG: 96×96 artwork with 16 px transparent padding, and included in the ZIP | Upstream's; replace |
-| Screenshots | 1–5, 1280×800 or 640×400, full bleed | Upstream's; replace |
-| Small promo tile | 440×280, **required** | Missing |
-| Marquee tile | 1400×560, optional | Upstream's; replace or drop |
+| Store icon | 128×128 PNG: 96×96 artwork with 16 px transparent padding, and included in the ZIP | Done: `icons/icon-128.png` |
+| Screenshots | 1–5, 1280×800 or 640×400, full bleed | Done: `screenshots/ethyra-store-1…5-*.png` |
+| Small promo tile | 440×280, **required** | Done: `screenshots/ethyra-promo-tile-440x280.png` |
+| Marquee tile | 1400×560, optional | None; skip it (the existing `chrome-marquee-1400x560.png` is upstream's) |
 | Category | Education **(check exact list)** | |
 | Language | English | |
 | Homepage and support URL | Optional, but give a support contact (hello@ethyra.com) | |
