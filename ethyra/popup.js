@@ -99,7 +99,7 @@ const LOADED_FLAG = "__ethyraContentScriptLoaded";
 
 const els = {};
 for (const id of [
-  "view-consent", "consent-check", "consent-agree",
+  "view-consent", "consent-check", "consent-agree", "consent-error",
   "view-not-canvas", "view-signin", "view-signup", "view-ready", "view-progress", "view-done",
   "email", "password", "signin", "signin-error", "go-signup",
   "signup-first", "signup-last", "signup-email", "signup-password", "signup-terms",
@@ -446,6 +446,7 @@ async function boot() {
 }
 
 function showConsent() {
+  fail(els["consent-error"], "");
   els["consent-check"].checked = false;
   els["consent-agree"].disabled = true;
   show("consent");
@@ -460,8 +461,18 @@ els["consent-check"].addEventListener("change", () => {
 els["consent-agree"].addEventListener("click", async () => {
   if (!els["consent-check"].checked) return;
   els["consent-agree"].disabled = true;
-  await askWorker({ type: "ETHYRA_ACCEPT_CONSENT" });
-  await boot();
+  fail(els["consent-error"], "");
+  // Boot only on a confirmed write. A failed one would otherwise rerun boot(),
+  // which clears the checkbox with no explanation; a failed message would leave
+  // Agree disabled for good.
+  try {
+    const result = await askWorker({ type: "ETHYRA_ACCEPT_CONSENT" });
+    if (!result?.ok) throw new Error(result?.error || "Could not save your agreement.");
+    await boot();
+  } catch (err) {
+    fail(els["consent-error"], err?.message || "Could not save your agreement. Try again.");
+    els["consent-agree"].disabled = !els["consent-check"].checked;
+  }
 });
 
 els.signin.addEventListener("click", async () => {

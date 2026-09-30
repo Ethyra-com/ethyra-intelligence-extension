@@ -407,6 +407,16 @@ test("the consent screen comes first, and nothing collects data without it", () 
   assert.match(popup, /consent-agree"\]\.disabled = !els\["consent-check"\]\.checked/);
   assert.match(popup, /ETHYRA_ACCEPT_CONSENT/);
 
+  // A failed save is shown, and Agree comes back so the student can retry;
+  // boot() runs only after the worker confirms the write.
+  assert.match(screen, /id="consent-error"/);
+  const agree = popup.slice(popup.indexOf('els["consent-agree"].addEventListener'));
+  const handler = agree.slice(0, agree.indexOf("\n});") );
+  assert.match(handler, /if \(!result\?\.ok\) throw/, "a failed consent write is ignored");
+  assert.match(handler, /catch \(err\)[\s\S]*fail\(els\["consent-error"\]/, "a failed consent write is not shown");
+  assert.match(handler, /catch \(err\)[\s\S]*consent-agree"\]\.disabled = /, "Agree stays disabled after a failure");
+  assert.ok(handler.indexOf("await boot()") > handler.indexOf("result?.ok"), "boot() runs before the write is confirmed");
+
   // boot() asks before sign-in or the ready view — which is what reaches
   // students already signed in before this screen existed.
   const boot = popup.slice(popup.indexOf("async function boot()"));
