@@ -99,6 +99,7 @@ const LOADED_FLAG = "__ethyraContentScriptLoaded";
 
 const els = {};
 for (const id of [
+  "view-consent", "consent-check", "consent-agree",
   "view-not-canvas", "view-signin", "view-signup", "view-ready", "view-progress", "view-done",
   "email", "password", "signin", "signin-error", "go-signup",
   "signup-first", "signup-last", "signup-email", "signup-password", "signup-terms",
@@ -115,7 +116,7 @@ for (const id of [
 let pollTimer = null;
 
 function show(view) {
-  for (const name of ["not-canvas", "signin", "signup", "ready", "progress", "analyzing", "done"]) {
+  for (const name of ["consent", "not-canvas", "signin", "signup", "ready", "progress", "analyzing", "done"]) {
     els[`view-${name}`].hidden = name !== view;
   }
 }
@@ -430,6 +431,13 @@ async function boot() {
     show("done");
     return;
   }
+  // After the in-flight views, before everything else: nothing that collects
+  // data — sign-in, sign-up, export — is reachable until the student has agreed.
+  // This also catches students who were signed in before the screen existed.
+  if (!session?.consented) {
+    showConsent();
+    return;
+  }
   if (!session?.user) {
     show("signin");
     return;
@@ -437,7 +445,24 @@ async function boot() {
   await showReady(session);
 }
 
+function showConsent() {
+  els["consent-check"].checked = false;
+  els["consent-agree"].disabled = true;
+  show("consent");
+}
+
 // ── Wiring ───────────────────────────────────────────────────────────────
+
+els["consent-check"].addEventListener("change", () => {
+  els["consent-agree"].disabled = !els["consent-check"].checked;
+});
+
+els["consent-agree"].addEventListener("click", async () => {
+  if (!els["consent-check"].checked) return;
+  els["consent-agree"].disabled = true;
+  await askWorker({ type: "ETHYRA_ACCEPT_CONSENT" });
+  await boot();
+});
 
 els.signin.addEventListener("click", async () => {
   fail(els["signin-error"], "");
@@ -449,6 +474,7 @@ els.signin.addEventListener("click", async () => {
       email: els.email.value.trim(),
       password: els.password.value,
     });
+    if (result?.consentRequired) return showConsent();
     if (!result?.ok) throw new Error(result?.error || "Sign-in failed.");
     await showReady({ user: result.user });
   } catch (err) {
@@ -533,6 +559,7 @@ els.signup.addEventListener("click", async () => {
       firstName,
       lastName,
     });
+    if (result?.consentRequired) return showConsent();
     if (!result?.ok) throw new Error(result?.error || "Sign-up failed.");
     await showReady({ user: result.user });
   } catch (err) {
@@ -559,6 +586,11 @@ els.export.addEventListener("click", async () => {
   els.export.disabled = true;
 
   const begun = await askWorker({ type: "ETHYRA_BEGIN_EXPORT" });
+  if (begun?.consentRequired) {
+    els.export.disabled = false;
+    showConsent();
+    return;
+  }
   if (!begun?.ok) {
     fail(els["ready-error"], begun?.error || "Could not start the export.");
     els.export.disabled = false;

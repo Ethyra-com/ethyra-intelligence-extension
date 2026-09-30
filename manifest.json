@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
-  "name": "Ethyra Intelligence — Canvas Export",
-  "description": "Export your own Canvas coursework to Ethyra Intelligence for analysis against the ACT College and Career Readiness Standards.",
+  "name": "Ethyra Canvas Export",
+  "description": "Export your own Canvas coursework to Ethyra for analysis against the ACT College and Career Readiness Standards.",
   "version": "0.1.0",
   "icons": {
     "16": "icons/icon-16.png",
@@ -35,6 +35,6 @@
   },
   "action": {
     "default_popup": "ethyra/popup.html",
-    "default_title": "Ethyra Intelligence"
+    "default_title": "Ethyra Canvas Export"
   }
 }

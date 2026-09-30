@@ -1,5 +1,5 @@
-Ethyra Intelligence — Canvas Export
-===================================
+Ethyra Canvas Export
+====================
 
 This is a fork of **canvas-course-downloader** by jasp-nerd, used under the MIT
 License. `LICENSE` is upstream's, retained verbatim as that licence requires,
@@ -70,9 +70,8 @@ Third-party dependencies
 Branding
 --------
 
-`icons/` is still upstream's artwork and the extension name is ours. That
-mismatch is fine for local development and must be resolved before any Chrome
-Web Store submission.
+`icons/` holds Ethyra's own artwork. `screenshots/` is still mostly upstream's
+and is not part of the store package (see `scripts/package.mjs`).
 
 Student data
 ------------

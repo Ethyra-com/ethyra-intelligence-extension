@@ -57,6 +57,29 @@ const DEFAULT_WEB_URL = "https://app.ethyra.com";
  */
 const EXPORT_STATE_KEY = "ethyra_export_state";
 
+/**
+ * The student's agreement to the popup's disclosure screen.
+ *
+ * The Chrome Web Store requires disclosure and an explicit "agree" inside the
+ * extension before any user data is collected — and sign-in collects some — so
+ * this gates sign-in and sign-up as well as the export.
+ *
+ * `CONSENT_VERSION` is the policy date it was written against. Bump it when
+ * LEGAL.md changes what the extension reads or where it sends it: a record for
+ * an older version no longer counts, and the popup asks again.
+ *
+ * `chrome.storage.local`, so it survives sign-out (it is about this browser's
+ * extension, not an account) and goes with an uninstall.
+ */
+const CONSENT_KEY = "ethyra_consent";
+const CONSENT_VERSION = "2026-09-29";
+const CONSENT_REQUIRED = "Please review and agree to how Ethyra uses your data first.";
+
+async function hasConsent() {
+  const stored = await chrome.storage.local.get(CONSENT_KEY);
+  return stored[CONSENT_KEY]?.version === CONSENT_VERSION;
+}
+
 async function readExportState() {
   const stored = await chrome.storage.session.get(EXPORT_STATE_KEY);
   return stored[EXPORT_STATE_KEY] || { status: "idle" };
@@ -210,9 +233,21 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
             webUrl: await getWebUrl(),
             user: await currentUser(),
             export: await readExportState(),
+            consented: await hasConsent(),
           });
           return;
         }
+
+        /**
+         * Record the student's agreement. Sent only by the popup's Agree button,
+         * which is enabled only once its checkbox is ticked.
+         */
+        case "ETHYRA_ACCEPT_CONSENT":
+          await chrome.storage.local.set({
+            [CONSENT_KEY]: { version: CONSENT_VERSION, acceptedAt: new Date().toISOString() },
+          });
+          sendResponse({ ok: true });
+          return;
 
         /**
          * Open the web app.
@@ -232,6 +267,10 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
           return;
 
         case "ETHYRA_SIGN_IN": {
+          if (!(await hasConsent())) {
+            sendResponse({ ok: false, error: CONSENT_REQUIRED, consentRequired: true });
+            return;
+          }
           const apiUrl = await getApiUrl();
           const user = await signIn(apiUrl, message.email, message.password);
           sendResponse({ ok: true, user });
@@ -239,6 +278,10 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         }
 
         case "ETHYRA_SIGN_UP": {
+          if (!(await hasConsent())) {
+            sendResponse({ ok: false, error: CONSENT_REQUIRED, consentRequired: true });
+            return;
+          }
           const apiUrl = await getApiUrl();
           const user = await signUp(apiUrl, {
             email: message.email,
@@ -285,6 +328,14 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
          * being held in the page for the duration.
          */
         case "ETHYRA_BEGIN_EXPORT": {
+          // The backstop for the consent screen, checked before a token is
+          // minted or any state written. Not left to the server: a 403 is
+          // swallowed in one step of `upload.js`, so it would not stop an
+          // export reliably.
+          if (!(await hasConsent())) {
+            sendResponse({ ok: false, error: CONSENT_REQUIRED, consentRequired: true });
+            return;
+          }
           const apiUrl = await getApiUrl();
           const accessToken = await getAccessToken();
           if (!accessToken) {

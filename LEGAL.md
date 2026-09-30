@@ -23,7 +23,7 @@
 
 **Last updated:** September 29, 2026
 
-This Privacy Policy explains how Ethyra ("Ethyra," "we," "us") handles your information when you use Ethyra's student product. That means the Ethyra web app, where you see your learning profile, and the **Ethyra — Canvas Export** browser extension (the "Extension"). Together we call them the "Service."
+This Privacy Policy explains how Ethyra ("Ethyra," "we," "us") handles your information when you use Ethyra's student product. That means the Ethyra web app, where you see your learning profile, and the **Ethyra Canvas Export** browser extension (the "Extension"). Together we call them the "Service."
 
 Ethyra reads coursework you have already completed and maps it against the ACT College and Career Readiness Standards to build your learning profile. To do that, it has to read your work. This policy explains what we collect, where it goes, and how to remove it.
 
@@ -47,7 +47,7 @@ By creating an account, installing the Extension, or otherwise using the Service
 
 ### Coursework You Export With the Extension
 
-The Extension does not read or send any of your Canvas coursework until you open it on a Canvas page and click **Export**. Installing it, or visiting Canvas with it installed, sends nothing. Signing in to the Extension sends only the account information described above, and keeps a sign-in token in your browser (see [Cookies and Browser Storage](#cookies-and-browser-storage)).
+When you first open the Extension, it shows what it collects and asks you to agree before you can sign in or export. The Extension does not read or send any of your Canvas coursework until you open it on a Canvas page and click **Export**. Installing it, or visiting Canvas with it installed, sends nothing. Signing in to the Extension sends only the account information described above, and keeps a sign-in token in your browser (see [Cookies and Browser Storage](#cookies-and-browser-storage)).
 
 When you click **Export**, the Extension reads the following from the Canvas site you are signed in to. It covers every course where you are enrolled **as a student**, both current and completed.
 
@@ -152,6 +152,7 @@ We may also disclose information if the law requires it, to protect the safety o
 
 - A sign-in token, in the Extension's own browser storage, so you do not have to sign in for every export. Only the Extension can read it. It is removed when you sign out.
 - The status of an export while it runs, discarded when the export finishes or you close the browser
+- A record that you agreed to the Extension's data disclosure, with the date and the version of the disclosure you agreed to, so it does not ask again until the disclosure changes. It stays when you sign out and is removed when you uninstall the Extension.
 
 The Extension stores no Canvas credentials and none of your coursework. We do not use advertising or tracking cookies.
 
@@ -225,7 +226,7 @@ Questions about this policy or your information: [hello@ethyra.com](mailto:hello
 
 **Last updated:** September 29, 2026
 
-These Terms of Service ("Terms") govern your use of Ethyra's student product: the Ethyra web app and the **Ethyra — Canvas Export** browser extension (the "Extension"), which together we call the "Service." The Service is provided by Ethyra ("Ethyra," "we," "us").
+These Terms of Service ("Terms") govern your use of Ethyra's student product: the Ethyra web app and the **Ethyra Canvas Export** browser extension (the "Extension"), which together we call the "Service." The Service is provided by Ethyra ("Ethyra," "we," "us").
 
 By creating an account, installing the Extension, or using the Service, you agree to these Terms and to our [Privacy Policy](https://ethyra.com/privacy). If you do not agree, do not use the Service.
 
