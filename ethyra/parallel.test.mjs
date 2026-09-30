@@ -91,22 +91,18 @@ test("a failure that ends the export stops new courses from starting", async () 
 
 function loadCanvasApi(answers) {
   const seen = [];
-  const response = ({ status, body = "" }) => ({
-    ok: status >= 200 && status < 300,
-    status,
-    clone() {
-      return this;
-    },
-    text: async () => body,
-  });
   const sandbox = vm.createContext({
     console: quiet,
     AbortController,
-    setTimeout: (fn) => fn(), // no real waiting between retries
-    clearTimeout() {},
+    TextDecoder,
+    // Every wait at a hundredth of its length: retries back off in 10-80 ms and
+    // the throttling check gives up on a body after 50 ms.
+    setTimeout: (fn, ms = 0) => setTimeout(fn, ms / 100),
+    clearTimeout,
     fetch: async (url) => {
       seen.push(url);
-      return response(answers.shift() || { status: 200 });
+      const { status = 200, body = "" } = answers.shift() || {};
+      return new Response(body, { status });
     },
   });
   vm.runInContext(readFileSync(join(ROOT, "canvas-api.js"), "utf8"), sandbox, { filename: "canvas-api.js" });
@@ -123,6 +119,16 @@ test("Canvas's rate-limit 403 is waited out and retried", async () => {
 
 test("any other 403 is final, as before", async () => {
   const { sandbox, seen } = loadCanvasApi([{ status: 403, body: "unauthorized" }]);
+  const res = await sandbox.fetchWithRetry("https://school.test/api/v1/courses");
+  assert.equal(res.status, 403);
+  assert.equal(seen.length, 1);
+});
+
+test("a 403 whose body never finishes does not hang the export", async () => {
+  // The fetch deadline ends with the headers, so the throttling check has to
+  // bound its own read. A body that never ends counts as an ordinary 403.
+  const stalled = new ReadableStream({ start() {} });
+  const { sandbox, seen } = loadCanvasApi([{ status: 403, body: stalled }]);
   const res = await sandbox.fetchWithRetry("https://school.test/api/v1/courses");
   assert.equal(res.status, 403);
   assert.equal(seen.length, 1);

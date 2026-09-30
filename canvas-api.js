@@ -38,12 +38,36 @@ async function fetchWithRetry(url, options = {}, retries = MAX_RETRIES) {
   }
 }
 
-/** True for Canvas's throttling 403, which says so in its body. */
+/** How long, and how far, the throttling check reads a 403's body. */
+const RATE_LIMIT_READ_MS = 5000;
+const RATE_LIMIT_READ_BYTES = 4096;
+
+/**
+ * True for Canvas's throttling 403, which says so in its body.
+ *
+ * Bounded in time and size. `fetchWithTimeout`'s deadline ends when the headers
+ * arrive, so an unbounded read of a body that stalls would hang the course, and
+ * with it the export. A read that runs out of either is cancelled and counts as
+ * "not throttled", which is what the 403 meant before this check existed.
+ */
 async function isRateLimited(res) {
+  const reader = res.clone().body?.getReader();
+  if (!reader) return false;
+  const timer = setTimeout(() => reader.cancel().catch(() => {}), RATE_LIMIT_READ_MS);
+  const decoder = new TextDecoder();
+  let text = "";
   try {
-    return /rate limit exceeded/i.test(await res.clone().text());
+    while (text.length < RATE_LIMIT_READ_BYTES) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      text += decoder.decode(value, { stream: true });
+    }
+    return /rate limit exceeded/i.test(text);
   } catch {
     return false;
+  } finally {
+    clearTimeout(timer);
+    reader.cancel().catch(() => {});
   }
 }
 
