@@ -20,7 +20,11 @@ async function fetchWithRetry(url, options = {}, retries = MAX_RETRIES) {
   for (let attempt = 0; attempt <= retries; attempt++) {
     try {
       const res = await fetchWithTimeout(url, options);
-      if (res.ok || (res.status < 500 && res.status !== 429)) return res;
+      // Ethyra fork: Canvas throttles a session that asks too fast with a 403
+      // whose body says "Rate Limit Exceeded" — not a 429. Courses are read
+      // side by side, so this is reachable; it is a wait, not a refusal.
+      const throttled = res.status === 403 && (await isRateLimited(res));
+      if (!throttled && (res.ok || (res.status < 500 && res.status !== 429))) return res;
       if (attempt === retries) return res;
       const delay = Math.min(1000 * 2 ** attempt, 8000);
       console.warn(`[Canvas Downloader] ${res.status} on ${url}, retrying in ${delay}ms...`);
@@ -31,6 +35,15 @@ async function fetchWithRetry(url, options = {}, retries = MAX_RETRIES) {
       console.warn(`[Canvas Downloader] Fetch error on ${url}, retrying in ${delay}ms...`);
       await new Promise((r) => setTimeout(r, delay));
     }
+  }
+}
+
+/** True for Canvas's throttling 403, which says so in its body. */
+async function isRateLimited(res) {
+  try {
+    return /rate limit exceeded/i.test(await res.clone().text());
+  } catch {
+    return false;
   }
 }
 

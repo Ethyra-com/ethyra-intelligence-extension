@@ -157,9 +157,37 @@ function logExportSize(files, totalBytes) {
     Object.fromEntries(rows.map(([course, r]) => [course, { files: r.files, MB: mb(r.bytes), "no size": r.unsized }]))
   );
   console.info(
-    `[Ethyra] Export: ${files.length} files, ~${mb(totalBytes)} MB before zipping ` +
+    `[Ethyra] Export: ${files.length} files, ~${mb(totalBytes)} MB ` +
       `(limit ${mb(ETHYRA_MAX_TOTAL_BYTES)} MB).`
   );
+}
+
+/** Courses read side by side. See "Several courses at once" in `collectExport`. */
+const COURSE_CONCURRENCY = 3;
+
+/**
+ * `fn` over `items`, at most `limit` at a time.
+ *
+ * The first failure stops any NEW item from starting and is rethrown once the
+ * ones already running have settled. A failure here is export-wide — over the
+ * size cap, cancelled, the backend gone — so starting more courses after it
+ * would only fetch work that can no longer be sent.
+ */
+async function forEachLimit(items, limit, fn) {
+  let next = 0;
+  let failure = null;
+  async function worker() {
+    while (!failure && next < items.length) {
+      const i = next++;
+      try {
+        await fn(items[i], i);
+      } catch (err) {
+        failure ??= err;
+      }
+    }
+  }
+  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker));
+  if (failure) throw failure;
 }
 
 async function collectExport({ origin, extensionVersion, onProgress = () => {}, sendCourse = null }) {
@@ -173,15 +201,29 @@ async function collectExport({ origin, extensionVersion, onProgress = () => {}, 
   }
   const courses = [...byId.values()].sort((a, b) => a.name.localeCompare(b.name));
   if (!courses.length) throw new Error("No courses found in this Canvas account.");
-  const files = [];
-  const manifestCourses = [];
-  const warnings = [];
-  // Set once any course went up file by file. The sender enforced the cap as it
-  // went, so the check at the end is only for the one-zip fallback.
-  let sentPerFile = false;
+  // ── Several courses at once ────────────────────────────────────────
+  //
+  // One course at a time spent most of an export waiting on Canvas: each course
+  // is a chain of API calls (assignments, then submissions, then files), and
+  // the chain for one course does nothing for the next. So
+  // `COURSE_CONCURRENCY` chains run side by side.
+  //
+  // Not every course at once. Canvas throttles a session that asks too fast
+  // (403 "Rate Limit Exceeded", retried in `fetchWithRetry`), and each course
+  // holds up to one sending batch in memory, so the width is a small constant.
+  //
+  // Courses finish out of order, so each writes its result into its own slot
+  // and the export is assembled in course order afterwards: the manifest and
+  // the warnings read the same whichever course happened to finish first.
+  const results = new Array(courses.length);
+  let done = 0;
 
-  for (const [index, course] of courses.entries()) {
-    onProgress({ phase: "collecting", course: course.name, index, total: courses.length });
+  async function collectCourse(course) {
+    const warnings = [];
+    const result = { warnings, files: [], entry: null, sentPerFile: false };
+    const progress = (extra = {}) =>
+      onProgress({ phase: "collecting", course: course.name, index: done, total: courses.length, ...extra });
+    progress();
 
     const recorder = createRecorder(course);
     let courseFiles;
@@ -190,7 +232,7 @@ async function collectExport({ origin, extensionVersion, onProgress = () => {}, 
         course.id,
         course.name,
         origin,
-        (msg) => onProgress({ phase: "collecting", course: course.name, index, total: courses.length, detail: msg }),
+        (msg) => progress({ detail: msg }),
         recorder
       );
     } catch (err) {
@@ -200,14 +242,14 @@ async function collectExport({ origin, extensionVersion, onProgress = () => {}, 
       if (err?.code === ETHYRA_NOT_A_STUDENT) {
         console.info(`[Ethyra] Skipping ${course.name}: not a student enrolment.`);
         warnings.push(`${course.name} was skipped — ${err.message}`);
-        continue;
+        return result;
       }
       // One course failing must not lose the other five. The student is told
       // which one, rather than being handed a shorter export with no
       // explanation.
       console.error(`[Ethyra] Collecting ${course.name} failed:`, err);
       warnings.push(`${course.name} could not be collected: ${err?.message || err}`);
-      continue;
+      return result;
     }
 
     warnings.push(...recorder.warnings);
@@ -242,7 +284,7 @@ async function collectExport({ origin, extensionVersion, onProgress = () => {}, 
     // A course with nothing turned in anywhere is not evidence about anybody.
     if (!manifestAssignments.some((a) => a.files.length)) {
       warnings.push(`No submitted work found in ${course.name}.`);
-      continue;
+      return result;
     }
 
     // ── Only the files an assignment claimed, and say what was not ────
@@ -284,11 +326,11 @@ async function collectExport({ origin, extensionVersion, onProgress = () => {}, 
       const { failed, hashes } = await sendCourse({
         course: course.name,
         files: courseClaimed,
-        index,
+        index: done,
         total: courses.length,
       });
       if (hashes) {
-        sentPerFile = true;
+        result.sentPerFile = true;
         for (const a of courseEntry.assignments) {
           for (const f of a.files) Object.assign(f, hashes.get(f.path) || {});
         }
@@ -302,8 +344,27 @@ async function collectExport({ origin, extensionVersion, onProgress = () => {}, 
         courseEntry = pruneFailed({ courses: [courseEntry] }, failed).courses[0];
       }
     }
-    files.push(...courseClaimed);
-    if (courseEntry) manifestCourses.push(courseEntry);
+    result.files = courseClaimed;
+    result.entry = courseEntry;
+    return result;
+  }
+
+  await forEachLimit(courses, COURSE_CONCURRENCY, async (course, index) => {
+    results[index] = await collectCourse(course);
+    done++;
+  });
+
+  const files = [];
+  const manifestCourses = [];
+  const warnings = [];
+  // Set once any course went up file by file. The sender enforced the cap as it
+  // went, so the check at the end is only for the one-zip fallback.
+  let sentPerFile = false;
+  for (const result of results) {
+    warnings.push(...result.warnings);
+    files.push(...result.files);
+    if (result.entry) manifestCourses.push(result.entry);
+    if (result.sentPerFile) sentPerFile = true;
   }
 
   const manifest = buildManifest({
