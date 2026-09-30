@@ -56,11 +56,15 @@ async function isRateLimited(res) {
   const timer = setTimeout(() => reader.cancel().catch(() => {}), RATE_LIMIT_READ_MS);
   const decoder = new TextDecoder();
   let text = "";
+  let bytes = 0;
   try {
-    while (text.length < RATE_LIMIT_READ_BYTES) {
+    while (bytes < RATE_LIMIT_READ_BYTES) {
       const { done, value } = await reader.read();
       if (done) break;
-      text += decoder.decode(value, { stream: true });
+      // A single chunk can be any size, so only what fits the budget is decoded.
+      const part = value.subarray(0, RATE_LIMIT_READ_BYTES - bytes);
+      bytes += part.byteLength;
+      text += decoder.decode(part, { stream: true });
     }
     return /rate limit exceeded/i.test(text);
   } catch {

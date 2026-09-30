@@ -133,3 +133,13 @@ test("a 403 whose body never finishes does not hang the export", async () => {
   assert.equal(res.status, 403);
   assert.equal(seen.length, 1);
 });
+
+test("only the first 4 KB of a 403 body is read, however it arrives", async () => {
+  // One large chunk: the budget is in bytes, not per read, so the marker past
+  // it is never decoded.
+  const late = { status: 403, body: "x".repeat(10_000) + "Rate Limit Exceeded" };
+  const { sandbox, seen } = loadCanvasApi([late]);
+  const res = await sandbox.fetchWithRetry("https://school.test/api/v1/courses");
+  assert.equal(res.status, 403);
+  assert.equal(seen.length, 1, "a marker beyond the budget does not count");
+});
