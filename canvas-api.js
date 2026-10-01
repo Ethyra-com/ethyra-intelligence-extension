@@ -107,9 +107,14 @@ async function fetchAllPages(url) {
   return results;
 }
 
-/** Returns courses for the current user. */
-async function fetchAllCourses(enrollmentState = "active") {
-  const domain = window.location.origin;
+/**
+ * Returns courses for the current user.
+ *
+ * Ethyra fork: `domain` is passed by the offscreen page, where
+ * `window.location` is the extension rather than Canvas. Upstream's callers
+ * omit it and get the page's origin, as before.
+ */
+async function fetchAllCourses(enrollmentState = "active", domain = window.location.origin) {
   const courses = await fetchAllPages(
     `${domain}/api/v1/courses?per_page=100&enrollment_state=${enrollmentState}&include[]=term`
   );

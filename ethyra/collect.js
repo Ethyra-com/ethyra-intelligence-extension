@@ -197,7 +197,7 @@ async function collectExport({ origin, extensionVersion, onProgress = () => {}, 
   // keyed by id it is collected once.
   const byId = new Map();
   for (const state of ["active", "completed"]) {
-    for (const course of await fetchAllCourses(state)) byId.set(course.id, course);
+    for (const course of await fetchAllCourses(state, origin)) byId.set(course.id, course);
   }
   const courses = [...byId.values()].sort((a, b) => a.name.localeCompare(b.name));
   if (!courses.length) throw new Error("No courses found in this Canvas account.");

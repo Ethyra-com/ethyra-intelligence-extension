@@ -157,7 +157,8 @@
     <section id="view-progress" hidden>
       <p class="lp-body" id="progress-label" style="margin-top: 0">Starting…</p>
       <div class="lp-bar"><div id="progress-bar"></div></div>
-      <p class="lp-body">
+      <!-- Worded by renderProgress: the tab matters only when the export runs in it. -->
+      <p class="lp-body" id="progress-hint">
         Keep this Canvas tab open. Navigating away will cancel the export.
       </p>
       <!-- Always available, not just after a timeout.

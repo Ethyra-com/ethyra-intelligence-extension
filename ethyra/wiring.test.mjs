@@ -64,6 +64,13 @@ const code = (rel) =>
     .replace(/\/\*[\s\S]*?\*\//g, (m) => m.replace(/[^\n]/g, " "))
     .replace(/^[^\S\n]*\/\/.*$/gm, "");
 
+/**
+ * The export's code: the tab's listener and the runner it shares with the
+ * offscreen page. `runExport` moved out of `content.js` into `run-export.js`,
+ * and the assertions about it hold for the pair.
+ */
+const exportCode = () => code("ethyra/content.js") + "\n" + code("ethyra/run-export.js");
+
 /** Indentation width, for walking out of a block to the guards enclosing it. */
 const indentOf = (line) => line.match(/^[ \t]*/)[0].length;
 
@@ -130,12 +137,12 @@ const REQUIRED = [
   ["ETHYRA_MAX_FILE_BYTES", "ethyra/profile.js", "ethyra/collect.js"],
   ["ETHYRA_UNREADABLE_EXTENSIONS", "ethyra/profile.js", "ethyra/collect.js"],
   ["ETHYRA_MAX_TOTAL_BYTES", "ethyra/profile.js", "ethyra/collect.js"],
-  ["ETHYRA_MAX_ZIP_BYTES", "ethyra/profile.js", "ethyra/content.js"],
-  ["collectExport", "ethyra/collect.js", "ethyra/content.js"],
-  ["buildArchive", "ethyra/archive.js", "ethyra/content.js"],
-  ["createFileSender", "ethyra/upload.js", "ethyra/content.js"],
-  ["completeUpload", "ethyra/upload.js", "ethyra/content.js"],
-  ["uploadMultipart", "ethyra/upload.js", "ethyra/content.js"],
+  ["ETHYRA_MAX_ZIP_BYTES", "ethyra/profile.js", "ethyra/run-export.js"],
+  ["collectExport", "ethyra/collect.js", "ethyra/run-export.js"],
+  ["buildArchive", "ethyra/archive.js", "ethyra/run-export.js"],
+  ["createFileSender", "ethyra/upload.js", "ethyra/run-export.js"],
+  ["completeUpload", "ethyra/upload.js", "ethyra/run-export.js"],
+  ["uploadMultipart", "ethyra/upload.js", "ethyra/run-export.js"],
   ["pruneFailed", "ethyra/archive.js", "ethyra/collect.js"],
   ["fetchFileBytes", "ethyra/archive.js", "ethyra/upload.js"],
 ];
@@ -341,6 +348,8 @@ test("the packaged release carries only production hosts and runtime files", asy
     "ethyra/auth.js",
     release.action.default_popup,
     "ethyra/popup.css",
+    "ethyra/offscreen.html",
+    "ethyra/offscreen.js",
     "rules.json",
     "LICENSE", // the MIT licence requires it
     ...Object.values(release.icons),
@@ -610,7 +619,7 @@ test("a successful upload is reported as analysis, not as finished", () => {
   // dies with its tab, and a student who navigates back to their coursework
   // while waiting would take the only thing watching down with them.
   assert.ok(
-    !/ETHYRA_GET_RUN|act\/runs/.test(read("ethyra/content.js")),
+    !/ETHYRA_GET_RUN|act\/runs/.test(read("ethyra/content.js") + read("ethyra/run-export.js") + read("ethyra/offscreen.js")),
     "the content script must not be what watches the run"
   );
 
@@ -644,7 +653,7 @@ test("the analysis view says the same things the web app says", () => {
 test("the analysis view offers the web app, and no copy of an archive that no longer exists", () => {
   const html = read(manifest.action.default_popup);
   const popup = code("ethyra/popup.js");
-  const content = code("ethyra/content.js");
+  const content = exportCode();
   const sw = read(manifest.background.service_worker);
 
   assert.match(html, /id="analysis-open"/, "there is no way through to the web app");
@@ -663,7 +672,7 @@ test("no Canvas name reaches Ethyra", () => {
   // identity to label them with — and it won, because it arrived last.
   const manifestSrc = code("ethyra/manifest.js");
   const upload = code("ethyra/upload.js");
-  const content = code("ethyra/content.js");
+  const content = exportCode();
   const popup = code("ethyra/popup.js");
 
   assert.ok(
@@ -687,7 +696,7 @@ test("no Canvas name reaches Ethyra", () => {
 
 test("a second export cannot start while one is running or analysing", () => {
   const sw = read(manifest.background.service_worker);
-  const content = code("ethyra/content.js");
+  const content = exportCode();
 
   const begin = sw.slice(sw.indexOf('case "ETHYRA_BEGIN_EXPORT"'), sw.indexOf('case "ETHYRA_EXPORT_PROGRESS"'));
 
@@ -717,7 +726,7 @@ test("a second export cannot start while one is running or analysing", () => {
 
 test("an aborted upload cannot start an analysis", () => {
   const sw = read(manifest.background.service_worker);
-  const content = code("ethyra/content.js");
+  const content = exportCode();
 
   // `analyzing` is reachable only with an uploadId, and an uploadId exists only
   // when the server answered 2xx. An upload killed in flight — the tab closed,
@@ -776,7 +785,7 @@ test("the analysis is polled at the pace the analysis moves", () => {
 });
 
 test("the message that ends an export is not allowed to be lost", () => {
-  const content = code("ethyra/content.js");
+  const content = exportCode();
 
   // A lost progress frame costs a stale number for 600ms. A lost EXPORT_DONE
   // costs the export: the state stays `running`, the popup renders a progress
@@ -1273,7 +1282,7 @@ test("no student-facing message tells them to use a control that does not exist"
 
   // Comments stripped: these files explain at length why the wording changed,
   // and prose describing the mistake must not fail the check that documents it.
-  for (const file of ["ethyra/collect.js", "ethyra/upload.js", "ethyra/content.js", "ethyra/popup.js"]) {
+  for (const file of ["ethyra/collect.js", "ethyra/upload.js", "ethyra/content.js", "ethyra/run-export.js", "ethyra/offscreen.js", "ethyra/popup.js"]) {
     const source = code(file);
     for (const pattern of CONTROLS_THAT_DO_NOT_EXIST) {
       assert.ok(!pattern.test(source), `${file} mentions ${pattern}, which this extension has no control for`);
@@ -1372,7 +1381,7 @@ test("nothing asks Canvas for marks", () => {
 
 test("each course is sent as it is collected, and its manifest lines carry the hashes", () => {
   const collect = code("ethyra/collect.js");
-  const content = code("ethyra/content.js");
+  const content = exportCode();
 
   // Inside the per-course step, before the export is assembled: links are fresh
   // and nothing waits for the whole export.
@@ -1385,7 +1394,7 @@ test("each course is sent as it is collected, and its manifest lines carry the h
 
 test("a running export gets a fresh token from the worker, and nothing else can", () => {
   const sw = code("ethyra/background.js");
-  const content = code("ethyra/content.js");
+  const content = exportCode();
   const block = sw.slice(sw.indexOf('case "ETHYRA_GET_TOKEN"'));
   assert.match(block.slice(0, 400), /status !== "running"/, "tokens only while an export runs");
   assert.match(block.slice(0, 400), /getAccessToken\(\)/, "refreshed where the refresh token is");
@@ -1393,7 +1402,7 @@ test("a running export gets a fresh token from the worker, and nothing else can"
 });
 
 test("the cap is enforced as files are sent, not after they all have been", () => {
-  const content = code("ethyra/content.js");
+  const content = exportCode();
   const collect = code("ethyra/collect.js");
   assert.match(content, /maxTotalBytes: ETHYRA_MAX_TOTAL_BYTES/, "the sender is given the cap");
   // The end-of-export check would say "nothing was uploaded" after the files
@@ -1402,10 +1411,101 @@ test("the cap is enforced as files are sent, not after they all have been", () =
 });
 
 test("the one-zip fallback is held to its own 500 MB cap, before and while building", () => {
-  const content = code("ethyra/content.js");
+  const content = exportCode();
   const zip = content.slice(content.indexOf('if (sender.mode === "zip")'));
   // Checked on Canvas's sizes before a single file is fetched...
   assert.ok(zip.indexOf("totalBytes > ETHYRA_MAX_ZIP_BYTES") < zip.indexOf("buildArchive("));
   // ...and on the real bytes while the archive is built.
   assert.match(zip, /maxBytes: ETHYRA_MAX_ZIP_BYTES/);
+});
+
+test("the offscreen page loads the same bundle as the tab, in the same order", () => {
+  // Two lists of the same scripts drift: a file added to CONTENT_SCRIPTS and not
+  // here is a ReferenceError in a page nobody can see, mid-export.
+  const html = read("ethyra/offscreen.html");
+  const loaded = [...html.matchAll(/<script src="([^"]+)"><\/script>/g)].map((m) =>
+    m[1].startsWith("../") ? m[1].slice(3) : `ethyra/${m[1]}`
+  );
+  assert.deepEqual(loaded, [...scripts.filter((f) => f !== "ethyra/content.js"), "ethyra/offscreen.js"]);
+  // offscreen.js replaces `loadSettings`, which only works after downloader.js
+  // has declared it.
+  assert.ok(loaded.indexOf("downloader.js") < loaded.indexOf("ethyra/offscreen.js"));
+  assert.match(read("downloader.js"), /^function loadSettings\(/m);
+  assert.match(code("ethyra/offscreen.js"), /^loadSettings = /m);
+});
+
+test("the export runs in an offscreen page when it can, and in the tab otherwise", () => {
+  assert.ok(manifest.permissions.includes("offscreen"), "chrome.offscreen needs the offscreen permission");
+
+  // Raw: the worker's URL patterns hold `/*`, which `code()` reads as a comment.
+  const sw = read(manifest.background.service_worker);
+  assert.match(sw, /chrome\.offscreen\.createDocument\(/);
+  assert.match(sw, /url: OFFSCREEN_URL/);
+  assert.match(sw, /const OFFSCREEN_URL = "ethyra\/offscreen\.html"/);
+  // Canvas is asked who is signed in before the page is trusted with an export.
+  assert.ok(sw.indexOf('type: "ETHYRA_PROBE_CANVAS"') < sw.indexOf('type: "ETHYRA_RUN_EXPORT"'));
+  // The token goes to the popup only when the popup has to start a tab export.
+  assert.match(sw, /accessToken: offscreen \? null : accessToken/);
+  // Closed when done, or Chrome keeps an idle page around.
+  assert.match(sw, /case "ETHYRA_OFFSCREEN_FINISHED":\s*await closeOffscreenDocument\(\)/);
+
+  const popup = code("ethyra/popup.js");
+  assert.match(popup, /begun\.mode === "offscreen"/);
+  assert.ok(
+    popup.indexOf('begun.mode === "offscreen"') < popup.indexOf('type: "ETHYRA_RUN_EXPORT"'),
+    "an offscreen export must not also be started in the tab"
+  );
+});
+
+test("the offscreen page sends the Canvas cookie to Canvas and nowhere else", () => {
+  const page = code("ethyra/offscreen.js");
+  assert.match(page, /credentials: "include"/);
+  // Gated on the Canvas origin with its trailing slash, so neither Ethyra's API
+  // nor blob storage nor a look-alike host (`school.instructure.com.evil`) gets it.
+  assert.match(page, /if \(canvasOrigin && url && url\.startsWith\(`\$\{canvasOrigin\}\/`\)\)/);
+  // Only one place in the file turns credentials on.
+  assert.equal(page.match(/credentials:/g).length, 1);
+  // It answers only what is addressed to it; everything else is the worker's.
+  assert.match(page, /if \(message\?\.target !== "offscreen"\) return false;/);
+  assert.match(read(manifest.background.service_worker), /if \(message\?\.target === "offscreen"\) return false;/);
+});
+
+test("an export whose runner is gone is reported, not left running", () => {
+  // A closed Canvas tab, or Chrome quitting with the offscreen page open, tells
+  // the worker nothing. Without this check the state stays `running`: a frozen
+  // bar, and every new export refused as "already running".
+  // Raw: the worker's URL patterns hold `/*`, which `code()` reads as a comment.
+  const sw = read(manifest.background.service_worker);
+  assert.match(sw, /export: await checkStillRunning\(await readExportState\(\)\)/);
+  assert.match(sw, /current\.startedAt !== state\.startedAt/, "a newer export must not be failed by a stale check");
+  assert.match(exportCode(), /exporting: Boolean\(exportInFlight\)/, "the tab must say whether it is exporting");
+  assert.match(code("ethyra/offscreen.js"), /exporting: Boolean\(exportInFlight\)/);
+});
+
+test("the offscreen page supplies the chrome.* the shared code calls", () => {
+  // An offscreen page's `chrome.runtime` is messaging only. `getManifest` was
+  // missing, `runExport` called it on its first line, and every offscreen
+  // export ended at once — reported 15 seconds later as "interrupted".
+  const page = code("ethyra/offscreen.js");
+  assert.match(page, /chrome\.runtime\.getManifest \?\?= /);
+  assert.match(page, /manifestReady\s*\n?\s*\.then\(\(\) => runExport\(message\)\)/, "the export must wait for the manifest");
+
+  // Any other chrome.* API in the bundle the page loads must be messaging, or
+  // sit where Ethyra mode never goes. Listed so a new call is a decision.
+  const allowed = /chrome\.runtime\.(sendMessage|onMessage|id|lastError|getURL|getManifest)\b/;
+  const reachable = ["canvas-api.js", "helpers.js", "ethyra/collect.js", "ethyra/archive.js", "ethyra/upload.js", "ethyra/run-export.js"];
+  for (const file of reachable) {
+    for (const [call] of code(file).matchAll(/chrome\.[a-zA-Z]+\.[a-zA-Z]+/g)) {
+      assert.match(call, allowed, `${file} calls ${call}, which an offscreen page does not have`);
+    }
+  }
+  // downloader.js: storage only in `loadSettings` (replaced) or behind `!ethyra`.
+  const lines = code("downloader.js").split("\n");
+  lines.forEach((line, i) => {
+    if (!/chrome\.storage\./.test(line) || /^function loadSettings|chrome\.storage\.sync\.get\(SETTING_DEFAULTS/.test(line.trim())) return;
+    assert.ok(
+      guardsAround(lines, i).some((g) => /!ethyra/.test(g)),
+      `downloader.js:${i + 1} uses chrome.storage where Ethyra mode can reach it`
+    );
+  });
 });
