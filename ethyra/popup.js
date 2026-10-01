@@ -91,6 +91,7 @@ const CONTENT_SCRIPTS = [
   "ethyra/archive.js",
   "ethyra/collect.js",
   "ethyra/upload.js",
+  "ethyra/run-export.js",
   "ethyra/content.js",
 ];
 
@@ -105,7 +106,7 @@ for (const id of [
   "signup-first", "signup-last", "signup-email", "signup-password", "signup-terms",
   "signup", "signup-error", "go-signin",
   "who", "signout", "export", "ready-error",
-  "progress-label", "progress-bar", "progress-cancel",
+  "progress-label", "progress-bar", "progress-hint", "progress-cancel",
   "view-analyzing", "analysis-label", "analysis-bar", "analysis-detail",
   "analysis-open", "analysis-error", "analysis-close",
   "done-message", "done-warnings", "done-ok",
@@ -207,6 +208,10 @@ function renderProgress(state) {
   }
 
   els["progress-label"].textContent = label;
+  els["progress-hint"].textContent =
+    state.mode === "offscreen"
+      ? "You can close this Canvas tab — the export keeps going on its own."
+      : "Keep this Canvas tab open. Navigating away will cancel the export.";
   // An indeterminate phase leaves the bar where it was rather than snapping to
   // zero, which reads as the export having restarted.
   if (fraction !== null) {
@@ -596,7 +601,18 @@ els.export.addEventListener("click", async () => {
   fail(els["ready-error"], "");
   els.export.disabled = true;
 
-  const begun = await askWorker({ type: "ETHYRA_BEGIN_EXPORT" });
+  // The worker runs the export in its own page when it can reach this Canvas,
+  // so it needs to know which Canvas; `activeTab` is what lets the popup read
+  // the tab's URL.
+  const tab = await activeTab();
+  let origin = null;
+  try {
+    origin = new URL(tab?.url || "").origin;
+  } catch {
+    // No readable URL: the worker falls back to running in this tab.
+  }
+
+  const begun = await askWorker({ type: "ETHYRA_BEGIN_EXPORT", origin, tabId: tab?.id ?? null });
   if (begun?.consentRequired) {
     els.export.disabled = false;
     showConsent();
@@ -605,6 +621,14 @@ els.export.addEventListener("click", async () => {
   if (!begun?.ok) {
     fail(els["ready-error"], begun?.error || "Could not start the export.");
     els.export.disabled = false;
+    return;
+  }
+
+  // Already running in the offscreen page. Nothing for this tab to do.
+  if (begun.mode === "offscreen") {
+    renderProgress({ phase: "starting", mode: "offscreen" });
+    show("progress");
+    startPolling();
     return;
   }
 

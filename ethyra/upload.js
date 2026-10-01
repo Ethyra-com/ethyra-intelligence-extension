@@ -26,13 +26,15 @@
  *
  * ── Where this runs, and why it is a CORS problem ─────────────────────
  *
- * In the content script, so the collection and the upload share one context and
- * a 300 MB Blob never has to cross `chrome.runtime.sendMessage` — which has
- * practical size limits, and whose two sides do not share storage either.
+ * Wherever the collection runs, so a 300 MB Blob never has to cross
+ * `chrome.runtime.sendMessage`. That is usually the offscreen page, whose
+ * `Origin` is `chrome-extension://…`: the API is in `host_permissions` so CORS
+ * does not apply to it, but the storage PUTs still need the storage account's
+ * CORS to admit that origin (see the README).
  *
- * The cost is that the request's `Origin` is the Canvas page's, e.g.
+ * In the tab fallback the `Origin` is the Canvas page's, e.g.
  * `https://school.instructure.com`. The backend's allowlist has to admit it, and
- * so does the storage account's CORS for the block PUTs (see the README).
+ * so does the storage account's CORS for the block PUTs.
  * The access token is passed in from the service worker only when the student
  * clicks Export and is never stored anywhere a page can read, so a hostile
  * Canvas page cannot obtain one — but the allowlist entry is real and should be

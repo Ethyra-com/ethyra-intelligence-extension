@@ -10,21 +10,23 @@
  *
  * ── Why the worker holds the export state at all ──────────────────────
  *
- * The export runs in the content script, which lives as long as the Canvas tab
- * does. The popup does not: it is destroyed the moment it loses focus, which
- * for a twenty-minute export is most of the time.
+ * The export runs in the offscreen page (`ethyra/offscreen.html`), or, when that
+ * cannot reach Canvas, in the Canvas tab's content script. The popup does not
+ * stay open: it is destroyed the moment it loses focus, which for a
+ * twenty-minute export is most of the time.
  *
  * So progress is reported here and the popup reads it on open. Without that, a
  * student who clicked Export and then clicked anywhere else would reopen the
  * popup to a blank sign-in screen with no way to tell whether their export was
  * still running.
  *
- * ── Why the access token is passed to the page, not kept here ─────────
+ * ── Why the access token is passed to the runner, not kept here ───────
  *
- * The upload has to happen in the content script — a 300 MB Blob cannot cross
- * `chrome.runtime.sendMessage`, and the two contexts do not share storage — so
- * the token has to travel. It is handed over only in response to a START_EXPORT
- * the student initiated, never stored where a page can read it, and it expires.
+ * The upload has to happen where the files are collected — a 300 MB Blob cannot
+ * cross `chrome.runtime.sendMessage` — so the token has to travel. It goes to the
+ * offscreen page when the export runs there, and to the Canvas page only when it
+ * falls back to the tab. Either way it is handed over only for an export the
+ * student started, never stored where a page can read it, and it expires.
  */
 
 importScripts("./auth.js");
@@ -160,6 +162,137 @@ async function fetchRun(apiUrl, uploadId) {
   return (runs || []).find((r) => String(r.upload_id) === String(uploadId)) || null;
 }
 
+// ── Where the export runs ───────────────────────────────────────────────────
+//
+// In the offscreen page whenever it can, so the student can close Canvas. In the
+// Canvas tab otherwise, which is how every export used to run. See the header of
+// `offscreen.js` for how the page reads Canvas, and `ETHYRA_BEGIN_EXPORT` below
+// for how the choice is made.
+
+const OFFSCREEN_URL = "ethyra/offscreen.html";
+
+/** How long a fresh export is given to start before a missing runner counts. */
+const START_GRACE_MS = 15000;
+
+const INTERRUPTED =
+  "The export was interrupted before it finished. What was already sent is kept — " +
+  "export again to pick up where you left off.";
+
+async function hasOffscreenDocument() {
+  const contexts = await chrome.runtime.getContexts({
+    contextTypes: ["OFFSCREEN_DOCUMENT"],
+    documentUrls: [chrome.runtime.getURL(OFFSCREEN_URL)],
+  });
+  return contexts.length > 0;
+}
+
+async function closeOffscreenDocument() {
+  try {
+    await chrome.offscreen.closeDocument();
+  } catch {
+    // Already gone. Closing is the goal either way.
+  }
+}
+
+/**
+ * A message to the offscreen page, retried while it finishes loading.
+ *
+ * `createDocument` can resolve before the page's scripts have registered their
+ * listener, and a message sent into that gap fails with "Receiving end does not
+ * exist" rather than waiting.
+ */
+async function askOffscreen(message) {
+  for (let attempt = 0; attempt < 5; attempt++) {
+    try {
+      const response = await chrome.runtime.sendMessage({ ...message, target: "offscreen" });
+      if (response) return response;
+    } catch {
+      // Not listening yet.
+    }
+    await new Promise((resolve) => setTimeout(resolve, 100 * (attempt + 1)));
+  }
+  return null;
+}
+
+/**
+ * Start the export in the offscreen page. False means "run it in the tab".
+ *
+ * Two checks, both cheap, both before anything is collected:
+ *
+ *   1. The Canvas host is in `host_permissions`. Without it the page's requests
+ *      are blocked by CORS. A self-hosted Canvas reaches the extension only
+ *      through `activeTab`, which the popup's tab holds and this page does not.
+ *   2. Canvas recognises the student from this page, i.e. Chrome sends the
+ *      session cookie. It should, but this is where that is tested on each
+ *      student's real Canvas, rather than assumed for all of them.
+ */
+async function startInOffscreen({ origin, apiUrl, accessToken }) {
+  if (!/^https:\/\/[^/]+$/.test(origin || "")) return false;
+  if (!(await chrome.permissions.contains({ origins: [`${origin}/*`] }))) return false;
+
+  if (!(await hasOffscreenDocument())) {
+    await chrome.offscreen.createDocument({
+      url: OFFSCREEN_URL,
+      reasons: ["DOM_PARSER"],
+      justification: "Reads the student's Canvas coursework in the background so the export continues after the Canvas tab is closed.",
+    });
+  }
+
+  const probe = await askOffscreen({ type: "ETHYRA_PROBE_CANVAS", origin });
+  if (!probe?.ok) {
+    console.info("[Ethyra] Canvas did not recognise the offscreen page; exporting in the tab.");
+    await closeOffscreenDocument();
+    return false;
+  }
+
+  const started = await askOffscreen({ type: "ETHYRA_RUN_EXPORT", origin, apiUrl, accessToken });
+  if (!started?.ok) {
+    // Not closed: "still finishing" means an earlier export is running in it.
+    console.warn("[Ethyra] The offscreen page did not start the export:", started?.error);
+    return false;
+  }
+  return true;
+}
+
+/**
+ * Whatever runs the export, is it still running it?
+ *
+ * Nothing tells the worker when a Canvas tab closes mid-export, or when Chrome
+ * quits with the offscreen page open. Without this the state stays `running`
+ * forever: the popup shows a frozen bar, and `ETHYRA_BEGIN_EXPORT` refuses every
+ * new export because one is "already running".
+ *
+ * Asked whenever the popup reads the session, which it does every 600ms while
+ * open, so a lost export is noticed as soon as anyone looks.
+ */
+async function checkStillRunning(state) {
+  if (state.status !== "running" || !state.mode) return state;
+  if (Date.now() - (state.startedAt || 0) < START_GRACE_MS) return state;
+
+  let alive = false;
+  try {
+    if (state.mode === "offscreen") {
+      alive = (await hasOffscreenDocument()) && Boolean((await askOffscreen({ type: "ETHYRA_STATUS" }))?.exporting);
+    } else if (state.tabId) {
+      alive = Boolean((await chrome.tabs.sendMessage(state.tabId, { type: "ETHYRA_PING" }))?.exporting);
+    }
+  } catch {
+    // The tab is closed, or no longer holds the content script.
+  }
+  if (alive) return state;
+
+  return withExportState(async () => {
+    const current = await readExportState();
+    // Only the export that was checked: one that finished, or a new one that
+    // started, while the check was out is left alone.
+    if (current.status !== "running" || current.startedAt !== state.startedAt) return current;
+    const failed = { status: "failed", error: INTERRUPTED, warnings: [], uploadId: null, uploadedAt: Date.now() };
+    await writeExportState(failed);
+    if (state.mode === "offscreen") await closeOffscreenDocument();
+    return failed;
+  });
+}
+
 let exportStateQueue = Promise.resolve();
 
 function withExportState(mutate) {
@@ -218,6 +351,9 @@ async function ensureCdnPermission() {
 }
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  // Addressed to the offscreen page, which answers it itself.
+  if (message?.target === "offscreen") return false;
+
   // Every branch is async, so the listener returns true and replies later.
   (async () => {
     try {
@@ -232,7 +368,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
             apiUrl,
             webUrl: await getWebUrl(),
             user: await currentUser(),
-            export: await readExportState(),
+            export: await checkStillRunning(await readExportState()),
             consented: await hasConsent(),
           });
           return;
@@ -385,9 +521,32 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
             sendResponse({ ok: false, error: refusal });
             return;
           }
-          sendResponse({ ok: true, apiUrl, accessToken });
+
+          // In the offscreen page if it can reach this Canvas, so the student
+          // can close the tab; otherwise the popup runs it in the tab, as
+          // before. `mode` is recorded only once the runner is known, because it
+          // is what `checkStillRunning` goes by.
+          let offscreen = false;
+          try {
+            offscreen = await startInOffscreen({ origin: message.origin, apiUrl, accessToken });
+          } catch (err) {
+            console.warn("[Ethyra] Could not use the offscreen page; exporting in the tab:", err);
+          }
+          const mode = offscreen ? "offscreen" : "tab";
+          await withExportState(async () => {
+            const state = await readExportState();
+            if (state.status !== "running") return;
+            await writeExportState({ ...state, mode, tabId: offscreen ? null : message.tabId ?? null });
+          });
+          sendResponse({ ok: true, mode, apiUrl, accessToken: offscreen ? null : accessToken });
           return;
         }
+
+        /** The offscreen page's export has reported done; its page can go. */
+        case "ETHYRA_OFFSCREEN_FINISHED":
+          await closeOffscreenDocument();
+          sendResponse({ ok: true });
+          return;
 
         /** Progress from the content script, for whenever the popup reopens. */
         case "ETHYRA_EXPORT_PROGRESS": {

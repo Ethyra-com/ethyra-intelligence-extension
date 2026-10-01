@@ -56,7 +56,8 @@ It must be the popup's first screen, shown before the sign-up and sign-in forms,
 | Permission | Justification |
 |---|---|
 | `activeTab` | Grants access only to the Canvas tab the user has open when they click the toolbar icon. The extension declares no content scripts; this is how it runs on schools' self-hosted Canvas domains without requesting access to every site. |
-| `scripting` | Injects the export code into that one tab after the user clicks, because Canvas's API must be called from inside the user's signed-in Canvas page. |
+| `scripting` | Injects the export code into that one tab after the user clicks. Used when the export cannot run in the background (a school's self-hosted Canvas domain). |
+| `offscreen` | Runs the export the user started in a hidden extension page (reason `DOM_PARSER`: Canvas pages and rich-text descriptions are parsed with `DOMParser`), so it continues if the user closes the Canvas tab. Created when the user clicks Export, closed when the export finishes. |
 | `storage` | Keeps the user signed in to Ethyra between exports (refresh token) and tracks the status of an export in progress. |
 | `declarativeNetRequest` | Adds a CORS response header on `canvas-user-content.com`, where Canvas serves submitted files, so the user's own submission files can be read and uploaded. One static rule, no request inspection. |
 | `*://*.instructure.com/*` | Canvas's hosted domain; the extension reads the user's own coursework through Canvas's API. |

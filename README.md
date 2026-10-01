@@ -54,11 +54,17 @@ popup            sign in, press Export, watch progress
   │                injects the bundle below into the tab, on open
   │
   ├─ background.js ──── holds the Ethyra session and the export's status
-  │                     (the popup dies when it loses focus; the export does not)
+  │                     (the popup dies when it loses focus; the export does not);
+  │                     picks where the export runs, and closes it when done
   │
-  └─ content.js ─────── runs inside the Canvas page, because that is where the
-       │                session cookie is
+  ├─ offscreen.html ─── usually: a hidden extension page with no tab, so the
+  │                     student can close Canvas mid-export. Chrome sends the
+  │                     Canvas cookie on its requests; checked before each export
+  │
+  └─ content.js ─────── fallback: inside the Canvas page, when the offscreen page
+       │                can't reach this Canvas (self-hosted, or no cookie)
        │
+       ├─ run-export.js  the export itself, shared by both
        ├─ downloader.js  upstream's collector, in Ethyra mode
        ├─ collect.js     records structured metadata; sends each course as it goes
        ├─ upload.js      per course: hash → /files → PUT new files; then /complete
@@ -184,10 +190,12 @@ No dependencies and no browser. Two suites:
 
 ## Known limitations
 
-**The Canvas tab is the process.** A content script dies when its page
-navigates, so browsing away mid-export cancels it. The popup warns while one is
-running. This is inherent to doing the work in the page, which is itself
-inherent to where the Canvas session cookie lives.
+**Closing Canvas is fine; quitting Chrome is not.** On `*.instructure.com` the
+export runs in an offscreen page and survives the Canvas tab closing. On a
+self-hosted Canvas, or if Chrome won't send the Canvas cookie to the offscreen
+page, it falls back to the tab, where browsing away cancels it (the popup warns).
+Either way, quitting Chrome stops it. The popup then says it was interrupted,
+and the next export skips every file already sent.
 
 **No cancel button yet.** Cancelling means reaching into a content script that
 may have outlived several popups, and a half-cancelled export that still uploads
