@@ -1,0 +1,29 @@
+<!doctype html>
+<!--
+  The export's own page. Created by the service worker when an export starts,
+  closed when it finishes, never shown. See ethyra/offscreen.js.
+
+  The scripts are the content bundle (CONTENT_SCRIPTS in ethyra/popup.js) in the
+  same order, without content.js, with offscreen.js last: it replaces
+  `loadSettings` from downloader.js, so it has to load after it.
+  ethyra/wiring.test.mjs checks the two lists agree.
+-->
+<html>
+  <head>
+    <meta charset="utf-8" />
+  </head>
+  <body>
+    <script src="../client-zip.min.js"></script>
+    <script src="../helpers.js"></script>
+    <script src="../detector.js"></script>
+    <script src="../canvas-api.js"></script>
+    <script src="profile.js"></script>
+    <script src="manifest.js"></script>
+    <script src="../downloader.js"></script>
+    <script src="archive.js"></script>
+    <script src="collect.js"></script>
+    <script src="upload.js"></script>
+    <script src="run-export.js"></script>
+    <script src="offscreen.js"></script>
+  </body>
+</html>

@@ -162,6 +162,7 @@ The Extension stores no Canvas credentials and none of your coursework. We do no
 |---|---|
 | `activeTab` | Access to the one tab you have open when you click the Extension's icon, and no other |
 | `scripting` | To run the export in that tab when you click, and not before |
+| `offscreen` | To keep the export running in the background after you close the Canvas tab, until it finishes |
 | `storage` | To keep you signed in between exports |
 | `declarativeNetRequest` | To allow your own submitted files to be downloaded from the servers where Canvas stores them |
 | Access to `instructure.com` | To read your coursework through Canvas's API |
