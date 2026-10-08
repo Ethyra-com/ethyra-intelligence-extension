@@ -92,8 +92,18 @@ async function runExport({ apiUrl, accessToken: firstToken, studentName, origin 
   };
   const extensionVersion = chrome.runtime.getManifest().version;
 
+  // Minted here rather than at `/complete`, so the progress the web app shows
+  // while collecting and the upload that replaces it share one id.
+  const uploadId = crypto.randomUUID();
+  const exportProgress = createExportReporter({ apiUrl, accessToken, uploadId });
+  // Every frame to the popup, and to Ethyra for the web app's first step.
+  const progress = (frame) => {
+    report(frame);
+    exportProgress.update(frame);
+  };
+
   try {
-    report({ phase: "collecting" });
+    progress({ phase: "collecting" });
     // Each course's files go to Ethyra as soon as that course is collected,
     // while its Canvas download links are fresh, and only the ones this
     // student has never sent. See `createFileSender`.
@@ -101,14 +111,15 @@ async function runExport({ apiUrl, accessToken: firstToken, studentName, origin 
       apiUrl,
       accessToken,
       maxTotalBytes: ETHYRA_MAX_TOTAL_BYTES,
-      onProgress: report,
+      onProgress: progress,
     });
     const { manifest, files, warnings, totalBytes } = await collectExport({
       origin,
       extensionVersion,
-      onProgress: report,
+      onProgress: progress,
       sendCourse: sender.sendCourse,
     });
+    await exportProgress.collected();
 
     if (!manifest.courses.length) {
       throw new Error("No submitted work was found in your Canvas courses.");
@@ -144,8 +155,12 @@ async function runExport({ apiUrl, accessToken: firstToken, studentName, origin 
         studentName,
         onProgress: report,
       });
+      // That upload has an id of its own, so `/complete` never takes this
+      // export's place: say it is over, or the web app shows it until it goes
+      // stale.
+      exportProgress.end("done");
     } else {
-      upload = await completeUpload({ apiUrl, accessToken, manifest, studentName });
+      upload = await completeUpload({ apiUrl, accessToken, uploadId, manifest, studentName });
       report({ phase: "uploaded" });
     }
 
@@ -158,6 +173,7 @@ async function runExport({ apiUrl, accessToken: firstToken, studentName, origin 
     });
   } catch (err) {
     console.error("[Ethyra] Export failed:", err);
+    exportProgress.end("failed");
     await tellWorker({
       type: "ETHYRA_EXPORT_DONE",
       error: err?.message || String(err),

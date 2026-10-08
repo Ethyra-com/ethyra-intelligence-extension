@@ -255,27 +255,114 @@ async function putFile(url, bytes, signal) {
   }
 }
 
-/** The manifest, once every file it names is stored. Resolves with the upload row. */
-async function completeUpload({ apiUrl, accessToken, manifest, studentName, signal }) {
+/**
+ * The manifest, once every file it names is stored. Resolves with the upload row.
+ *
+ * `uploadId` is minted when the export starts, not here: the progress reported
+ * while collecting is filed under it, and completing with the same id is what
+ * replaces that progress with the upload in one step on the web app.
+ */
+async function completeUpload({ apiUrl, accessToken, uploadId, manifest, studentName, signal }) {
   return callApi(`${apiUrl}/api/act/uploads/complete`, {
     accessToken,
     signal,
-    body: { upload_id: crypto.randomUUID(), manifest, student_name: studentName || null },
+    body: { upload_id: uploadId, manifest, student_name: studentName || null },
   });
 }
 
+// At most one progress report per this many ms, plus a heartbeat while nothing
+// changes — a long course can go a minute without a frame, and the web app
+// stops showing an export it has not heard from in three.
+const EXPORT_REPORT_MS = 2000;
+const EXPORT_HEARTBEAT_MS = 30000;
+
 /**
- * A JSON POST to the backend. Errors carry `status`, or none when unreachable.
+ * Tells Ethyra how far collecting has got, so the web app can show it as the
+ * first step before any upload exists.
+ *
+ * Advisory, like the popup's progress: every failure is swallowed, and a
+ * backend without the route (404/405) turns it off for the rest of the export.
+ * Never awaited by the export except `finish`, which sends the last frame
+ * before `/complete` so the step reads 100% rather than whatever it last said.
+ */
+function createExportReporter({ apiUrl, accessToken, uploadId }) {
+  const state = { courses_done: 0, courses_total: 0, files_sent: 0, files_skipped: 0 };
+  let enabled = true;
+  let lastSent = 0;
+  let timer = null;
+  let inFlight = Promise.resolve();
+
+  function send(status = "running") {
+    if (!enabled) return inFlight;
+    lastSent = Date.now();
+    const body = { status, ...state };
+    inFlight = inFlight.then(async () => {
+      try {
+        await callApi(`${apiUrl}/api/act/uploads/${uploadId}/export-progress`, { accessToken, body, method: "PUT" });
+      } catch (err) {
+        if (err?.status === 404 || err?.status === 405) enabled = false;
+      }
+    });
+    return inFlight;
+  }
+
+  function schedule() {
+    if (timer || !enabled) return;
+    const wait = Math.max(0, EXPORT_REPORT_MS - (Date.now() - lastSent));
+    timer = setTimeout(() => {
+      timer = null;
+      send();
+    }, wait);
+  }
+
+  const heartbeat = setInterval(() => send(), EXPORT_HEARTBEAT_MS);
+
+  function stop() {
+    clearInterval(heartbeat);
+    clearTimeout(timer);
+    timer = null;
+  }
+
+  return {
+    /** Fold in one of the export's own progress frames. */
+    update(progress) {
+      if (progress?.phase === "collecting" || progress?.phase === "sending") {
+        if (Number.isFinite(progress.index)) state.courses_done = progress.index;
+        if (Number.isFinite(progress.total)) state.courses_total = progress.total;
+      }
+      if (progress?.phase === "sending") {
+        if (Number.isFinite(progress.sent)) state.files_sent = progress.sent;
+        if (Number.isFinite(progress.skipped)) state.files_skipped = progress.skipped;
+      }
+      schedule();
+    },
+    /** Every course collected: the step at 100%, sent and waited for. */
+    async collected() {
+      state.courses_done = state.courses_total;
+      stop();
+      await send();
+    },
+    /** The export ended without `/complete` taking it over. Not awaited past the request. */
+    end(status) {
+      stop();
+      return send(status);
+    },
+    stop,
+  };
+}
+
+/**
+ * A JSON request to the backend, POST unless `method` says otherwise. Errors carry `status`, or none when unreachable.
  *
  * `accessToken` may be a function returning one, asked for on every call: an
  * export runs longer than a token lives.
  */
-async function callApi(url, { accessToken, signal, body }) {
+async function callApi(url, { accessToken, signal, body, method = "POST" }) {
   const token = typeof accessToken === "function" ? await accessToken() : accessToken;
   let res;
   try {
     res = await fetch(url, {
-      method: "POST",
+      method,
       headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
       body: JSON.stringify(body),
       signal,

@@ -52,6 +52,9 @@ function load(respond) {
     DOMException,
     setTimeout,
     clearTimeout,
+    // The export reporter's heartbeat. Never fires here; the tests drive it.
+    setInterval: () => 0,
+    clearInterval: () => {},
   });
   for (const f of ["ethyra/archive.js", "ethyra/upload.js"]) {
     vm.runInContext(readFileSync(join(ROOT, f), "utf8"), sandbox, { filename: f });
@@ -175,13 +178,14 @@ test("a refusal from /files is the backend's own message", async () => {
   await assert.rejects(send(sandbox, [file("a.txt", "alpha")]), /50 MB limit/);
 });
 
-test("complete sends the manifest with a fresh upload id", async () => {
+test("complete sends the manifest under the export's upload id", async () => {
   const { sandbox, calls } = load(backend());
   const manifest = { manifest_version: 1, courses: [] };
-  const upload = await sandbox.completeUpload({ apiUrl: API, accessToken: "t", manifest, studentName: "Ada" });
+  const uploadId = "3f1c2a5e-0000-4000-8000-000000000001";
+  const upload = await sandbox.completeUpload({ apiUrl: API, accessToken: "t", uploadId, manifest, studentName: "Ada" });
   assert.equal(upload.id, "abc");
   const body = JSON.parse(calls[0].body);
-  assert.match(body.upload_id, /^[0-9a-f-]{36}$/);
+  assert.equal(body.upload_id, uploadId);
   assert.deepEqual(body.manifest, manifest);
   assert.equal(body.student_name, "Ada");
 });
@@ -313,4 +317,74 @@ test("the first request is answered before the next course asks, then they run f
   assert.deepEqual(order.slice(0, 2), ["ask 1", "answer 1"], "nobody asked while the first was out");
   assert.ok(results.every((r) => r.hashes?.size === 1), "every course went up per file");
   assert.equal(sender.sent, 3);
+});
+
+// ── The web app's first step: progress reported while collecting ─────────
+
+const EXPORT_ID = "3f1c2a5e-0000-4000-8000-000000000002";
+const reports = (calls) => calls.filter((c) => c.url.endsWith("/export-progress"));
+
+/** A reporter whose throttle timer is held until `flush()` runs it. */
+function reporter(respond = () => ({ status: 204 })) {
+  const { sandbox, calls } = load(respond);
+  const timers = [];
+  sandbox.setTimeout = (fn) => timers.push(fn);
+  const r = sandbox.createExportReporter({ apiUrl: API, accessToken: "t", uploadId: EXPORT_ID });
+  const flush = async () => {
+    while (timers.length) timers.shift()();
+    await new Promise((resolve) => setImmediate(resolve));
+  };
+  return { r, calls, flush };
+}
+
+test("collecting frames are reported under the export's id, courses and files", async () => {
+  const { r, calls, flush } = reporter();
+  r.update({ phase: "collecting", index: 1, total: 4 });
+  r.update({ phase: "sending", course: "Algebra", index: 2, total: 4, sent: 7, skipped: 3 });
+  await flush();
+
+  const sent = reports(calls);
+  assert.equal(sent.length, 1, "throttled to the latest frame");
+  assert.equal(sent[0].url, `${API}/api/act/uploads/${EXPORT_ID}/export-progress`);
+  assert.equal(sent[0].method, "PUT");
+  assert.deepEqual(JSON.parse(sent[0].body), {
+    status: "running",
+    courses_done: 2,
+    courses_total: 4,
+    files_sent: 7,
+    files_skipped: 3,
+  });
+});
+
+test("collected reports the step full before complete is sent", async () => {
+  const { r, calls } = reporter();
+  r.update({ phase: "collecting", index: 3, total: 4 });
+  await r.collected();
+  const last = JSON.parse(reports(calls).at(-1).body);
+  assert.equal(last.courses_done, 4);
+  assert.equal(last.status, "running");
+});
+
+test("an ended export says how it ended", async () => {
+  const { r, calls } = reporter();
+  await r.end("failed");
+  assert.equal(JSON.parse(reports(calls).at(-1).body).status, "failed");
+});
+
+test("a backend without the route turns reporting off, and never fails the export", async () => {
+  const { r, calls, flush } = reporter(() => ({ status: 404 }));
+  r.update({ phase: "collecting", index: 0, total: 2 });
+  await flush();
+  r.update({ phase: "collecting", index: 1, total: 2 });
+  await flush();
+  await r.collected();
+  assert.equal(reports(calls).length, 1);
+});
+
+test("an outage is swallowed and reporting carries on", async () => {
+  const { r, calls, flush } = reporter(() => ({ throws: new TypeError("offline") }));
+  r.update({ phase: "collecting", index: 0, total: 2 });
+  await flush();
+  await r.collected();
+  assert.equal(reports(calls).length, 2);
 });

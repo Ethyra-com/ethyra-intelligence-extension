@@ -142,6 +142,7 @@ const REQUIRED = [
   ["buildArchive", "ethyra/archive.js", "ethyra/run-export.js"],
   ["createFileSender", "ethyra/upload.js", "ethyra/run-export.js"],
   ["completeUpload", "ethyra/upload.js", "ethyra/run-export.js"],
+  ["createExportReporter", "ethyra/upload.js", "ethyra/run-export.js"],
   ["uploadMultipart", "ethyra/upload.js", "ethyra/run-export.js"],
   ["pruneFailed", "ethyra/archive.js", "ethyra/collect.js"],
   ["fetchFileBytes", "ethyra/archive.js", "ethyra/upload.js"],
