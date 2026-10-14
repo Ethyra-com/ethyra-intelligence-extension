@@ -98,7 +98,13 @@ function createFileSender({ apiUrl, accessToken, signal, maxTotalBytes = Infinit
     }
   }
 
-  async function sendCourse({ course, files, index, total }) {
+  /**
+   * `optional` is for course documents (see `structure.js`): over the cap they
+   * stop quietly with `capped: true` instead of ending the export, because the
+   * course's own materials must never be the reason a student's work is not
+   * sent. They are sent after every course's submissions for the same reason.
+   */
+  async function sendCourse({ course, files, index, total, optional = false }) {
     const hashes = new Map();
     const failed = [];
     if (sender.mode === "zip") return { failed, hashes: null };
@@ -128,6 +134,7 @@ function createFileSender({ apiUrl, accessToken, signal, maxTotalBytes = Infinit
       // the next export, the same as after any export that does not finish.
       const batchBytes = ok.reduce((n, f) => n + f.bytes.byteLength, 0);
       if (sender.bytes + batchBytes > maxTotalBytes) {
+        if (optional) return { failed, hashes, capped: true };
         const mb = (n) => Math.round(n / (1024 * 1024));
         throw new Error(
           `Your coursework is over Ethyra's ${mb(maxTotalBytes)} MB limit, so the export stopped at ${course}. ` +

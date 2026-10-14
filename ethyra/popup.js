@@ -89,6 +89,7 @@ const CONTENT_SCRIPTS = [
   "ethyra/manifest.js",
   "downloader.js",
   "ethyra/archive.js",
+  "ethyra/structure.js",
   "ethyra/collect.js",
   "ethyra/upload.js",
   "ethyra/run-export.js",

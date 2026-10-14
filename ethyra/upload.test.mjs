@@ -173,6 +173,19 @@ for (const [name, answer] of [
   });
 }
 
+test("an optional send (course documents) over the cap stops quietly instead of failing", async () => {
+  const { sandbox, calls } = load(backend());
+  const sender = sandbox.createFileSender({ apiUrl: API, accessToken: "t", maxTotalBytes: 12 });
+  await sender.sendCourse({ course: "Algebra", files: [file("a.txt", "work work")], index: 0, total: 1 });
+  const docs = [file("n.txt", "notes notes")];
+  const result = await sender.sendCourse({ course: "Algebra", files: docs, index: 1, total: 1, optional: true });
+  assert.equal(result.capped, true);
+  assert.equal(result.hashes.size, 0);
+  assert.equal(puts(calls).length, 1, "only the work was sent");
+  // Without `optional`, the same thing ends the export, as before.
+  await assert.rejects(sender.sendCourse({ course: "Algebra", files: docs, index: 1, total: 1 }), /limit/);
+});
+
 test("a refusal from /files is the backend's own message", async () => {
   const { sandbox } = load(() => ({ status: 413, json: { detail: "A file is larger than the 50 MB limit for one file." } }));
   await assert.rejects(send(sandbox, [file("a.txt", "alpha")]), /50 MB limit/);

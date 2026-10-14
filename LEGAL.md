@@ -21,7 +21,7 @@
 
 # Ethyra Privacy Policy
 
-**Last updated:** September 29, 2026
+**Last updated:** October 13, 2026
 
 This Privacy Policy explains how Ethyra ("Ethyra," "we," "us") handles your information when you use Ethyra's student product. That means the Ethyra web app, where you see your learning profile, and the **Ethyra Canvas Export** browser extension (the "Extension"). Together we call them the "Service."
 
@@ -70,6 +70,19 @@ When you click **Export**, the Extension reads the following from the Canvas sit
 - Course name, course code and term
 - Your name, as Canvas records it
 
+**How each course is organized**
+
+For each course where you turned in work, the Extension also reads what Canvas shows you about the course itself, so Ethyra can map what the course covers and what comes next:
+
+- The syllabus
+- Modules and the items in them (titles, types and due dates, including items not yet unlocked)
+- Published pages and their text
+- Quiz titles, descriptions, due dates and number of questions. Quiz questions and answers are never read.
+- Learning outcomes attached to the course
+- Document files your instructor posted (PDF, Word, PowerPoint, Excel, text and similar). Video, audio and images are not collected.
+
+If Canvas does not show you part of a course, such as its Files or Pages, that part is skipped.
+
 As each course is read, its files are uploaded directly to Ethyra's secure storage. Files you already sent in an earlier export are recognized and not sent again.
 
 ### What the Extension Does Not Read
@@ -80,7 +93,8 @@ The items below are never requested from Canvas. They are not collected and filt
 - **Rubric marks.** How your instructor scored you against each rubric criterion is not read.
 - **Class statistics.** Class averages, medians and similar figures are not read.
 - **Anything about other students.** The Extension does not read other students' work, grades or names. If you are a teacher, TA or designer in a course, that course is skipped before anything in it is read, and the Extension tells you which courses were skipped.
-- **Course materials.** Course files, pages, modules, announcements, discussions, quizzes and the syllabus are not collected.
+- **Quiz content, discussions and announcements.** Quiz questions and answers, discussion threads and announcements are not collected.
+- **Media.** Course videos, audio and images are never downloaded.
 - **Your Canvas password.** The Extension never sees or asks for your Canvas password or a Canvas access token. It uses the Canvas session you are already signed in to.
 - **Your browsing.** The Extension is not present on the pages you visit. It runs only in the tab you have open when you click its icon, and there it reads only Canvas.
 

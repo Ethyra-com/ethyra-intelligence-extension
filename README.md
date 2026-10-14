@@ -27,7 +27,9 @@ Upstream mirrors a whole Canvas course to your Downloads folder. This one
 collects one student's own work and uploads it. The scope is narrowed by
 **configuration**, not by deletion — `ethyra/profile.js` turns eleven content
 types down to three — so the code upstream maintains is still here and still
-mergeable. `NOTICE` records what changed and what is deliberately left unloaded.
+mergeable. Course structure (syllabus, modules, pages…) is read separately by
+`ethyra/structure.js` as manifest data, not through upstream's mirror. `NOTICE`
+records what changed and what is deliberately left unloaded.
 
 ## What it collects
 
@@ -35,15 +37,27 @@ mergeable. `NOTICE` records what changed and what is deliberately left unloaded.
 |---|---|
 | Files you submitted, every attempt | Instructor comments and rubric marks |
 | Text you typed into Canvas | Class averages and medians |
-| Assignment instructions, verbatim | Course files, pages, modules, quizzes, discussions |
-| Rubrics, and files attached to instructions | Anything belonging to another student |
-| Due dates and submission dates | |
-| Your grade on each gradebook item, in courses you submitted work to | |
+| Assignment instructions, verbatim | Quiz questions and answers |
+| Rubrics, and files attached to instructions | Discussions and announcements |
+| Due dates and submission dates | Course video, audio and images |
+| Your grade on each gradebook item, in courses you submitted work to | Anything belonging to another student |
+| **Course structure** (since 2026-10-13), per course you submitted work to: syllabus; modules and their items, locked/future ones included; published pages (≤200, body ≤64k chars); quiz metadata; outcomes | |
+| **Course document files** (pdf, docx, doc, pptx, xlsx, txt, rtf, odt, md, html) not already in the export, ≤50 MB each, ≤300 per course — per-file upload only | |
 
 The exclusions are enforced at the **request**, not by a filter afterwards —
 `score_statistics`, `submission_comments` and `rubric_assessment` are never asked
-for. Data not requested is data not received, and no later filter can be
-forgotten. `ethyra/wiring.test.mjs` fails the build if any of them reappears.
+for, and the quiz list (which has no questions) is all that is read of a quiz.
+Data not requested is data not received, and no later filter can be forgotten.
+`ethyra/wiring.test.mjs` fails the build if any of them reappears.
+
+**Course structure** goes in the manifest as an optional `structure` key on each
+course (`manifest_version` stays 1). Every section is read on its own; one Canvas
+refuses (students often can't see Files or Pages) is left out, never a failure.
+Absent means "couldn't look", `[]` means "none". Course documents go only through
+the per-file hash store, after every course's own work, and stop quietly at the
+size cap so they can never crowd out a submission. The one-zip fallback leaves
+`structure.files` out and puts no course document in the zip, since the backend
+reports unclaimed archive entries.
 
 Full detail in [LEGAL.md](LEGAL.md): Ethyra's privacy policy and terms, one document for the web app and this extension. It is a copy of `ethyra-intelligence-backend/LEGAL.md`; edit that one and copy it here.
 
@@ -66,6 +80,7 @@ popup            sign in, press Export, watch progress
        │
        ├─ run-export.js  the export itself, shared by both
        ├─ downloader.js  upstream's collector, in Ethyra mode
+       ├─ structure.js   a course's syllabus, modules, pages, quizzes, outcomes, documents
        ├─ collect.js     records structured metadata; sends each course as it goes
        ├─ upload.js      per course: hash → /files → PUT new files; then /complete
        └─ archive.js     one zip in one request, only for a backend without /files
@@ -155,7 +170,9 @@ version that isn't higher than the last one.
 node --test "ethyra/*.test.mjs"
 ```
 
-No dependencies and no browser. Two suites:
+No dependencies and no browser. The two below matter most; `structure.test.mjs`
+runs course-structure collection against a fake Canvas (pagination, 403s, file
+filtering, the zip fallback).
 
 - **`manifest.test.mjs`** — the manifest is a contract with a parser, tested like
   one. Includes the pre-flight validator that catches a manifest/archive

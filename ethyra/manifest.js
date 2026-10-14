@@ -56,6 +56,8 @@
  *     claimed by exactly one assignment — unclaimed files are dropped with a
  *     warning rather than guessed at
  *   - `role` is `submission` or `instruction_attachment`, nothing else
+ *   - a course's optional `structure` names files by hash only; they are never
+ *     archive entries, so the one-zip fallback leaves `structure.files` out
  *
  * Every other field is optional, and **absent means unknown, never a default**.
  * A missing `due_at` makes the backend fall back to ordering by filename; a
@@ -174,8 +176,16 @@ function manifestAssignment({ assignment, submission, path, files }) {
   };
 }
 
-/** One course. `path` is a single component — the backend rejects anything deeper. */
-function manifestCourse({ course, path, assignments }) {
+/**
+ * One course. `path` is a single component — the backend rejects anything deeper.
+ *
+ * `structure` is optional and additive (manifest_version stays 1): the course's
+ * syllabus, modules, pages, quizzes, outcomes and document files, built by
+ * `structure.js`. `collect.js` attaches it after the course's work is sent. Each
+ * key inside it is absent when Canvas would not show it to the student, and
+ * `files` is absent whenever the upload went as one zip.
+ */
+function manifestCourse({ course, path, assignments, structure = null }) {
   return {
     path,
     canvas_course_id: id(course.id),
@@ -183,6 +193,7 @@ function manifestCourse({ course, path, assignments }) {
     course_code: text(course.course_code, 255),
     term: text(course.term?.name, 255),
     assignments,
+    ...(structure ? { structure } : {}),
   };
 }
 

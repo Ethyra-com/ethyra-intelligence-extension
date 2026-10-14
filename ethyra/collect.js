@@ -316,6 +316,25 @@ async function collectExport({ origin, extensionVersion, onProgress = () => {}, 
 
     let courseEntry = manifestCourse({ course, path: recorder.courseFolder, assignments: manifestAssignments });
 
+    // ── The course's structure, read while its work is being sent ─────
+    //
+    // Only for a course that made it this far: a course the student teaches
+    // was refused inside `downloadCourse` before anything in it was read, and a
+    // course with no submitted work is not in the manifest to carry it. Started
+    // before the send and awaited after it, so the two overlap. Never fails the
+    // course: `fetchCourseStructure` leaves out whatever it cannot read.
+    progress({ detail: "Reading the course's syllabus, modules and pages" });
+    const claimedIds = new Set(courseClaimed.map((f) => f.canvasId).filter(Boolean));
+    const structureRead = fetchCourseStructure({
+      origin,
+      courseId: course.id,
+      claimedIds,
+      withFiles: Boolean(sendCourse),
+    }).catch((err) => {
+      console.info(`[Ethyra] ${course.name}: course structure left out:`, err);
+      return null;
+    });
+
     // ── Sent now, while this course's download links are fresh ────────
     //
     // Each file is fetched, hashed and, if this student has never sent it,
@@ -346,12 +365,56 @@ async function collectExport({ origin, extensionVersion, onProgress = () => {}, 
     }
     result.files = courseClaimed;
     result.entry = courseEntry;
+
+    const read = await structureRead;
+    if (courseEntry && read) {
+      courseEntry.structure = read.structure;
+      if (read.documents) {
+        result.documents = courseDocumentEntries(recorder.courseFolder, read.documents);
+        // Course files byte-identical to work in this course are not listed twice.
+        result.submittedHashes = new Set(
+          courseEntry.assignments.flatMap((a) => a.files.map((f) => f.sha256).filter(Boolean))
+        );
+      }
+    }
     return result;
   }
 
   await forEachLimit(courses, COURSE_CONCURRENCY, async (course, index) => {
     results[index] = await collectCourse(course);
     done++;
+  });
+
+  // ── Course documents, after every course's work ───────────────────
+  //
+  // Sent last so they can never crowd a student's own work out of the size
+  // cap, and as `optional` so reaching it stops them quietly rather than
+  // ending the export. Per-file only: in the one-zip fallback `sendCourse`
+  // answers with no hashes and `structure.files` stays absent, because a file
+  // in the archive that no assignment claims is reported as unclaimed.
+  let documentsCapped = false;
+  const perFile = results.some((r) => r.sentPerFile);
+  const withDocuments = perFile ? results.filter((r) => r.entry?.structure && r.documents) : [];
+  await forEachLimit(withDocuments, COURSE_CONCURRENCY, async (result) => {
+    const name = result.entry.name || result.entry.path;
+    if (!result.documents.length) {
+      result.entry.structure.files = [];
+      return;
+    }
+    try {
+      const sent = await sendCourse({
+        course: name,
+        files: result.documents,
+        index: courses.length,
+        total: courses.length,
+        optional: true,
+      });
+      if (!sent?.hashes) return;
+      if (sent.capped) documentsCapped = true;
+      result.entry.structure.files = structureFiles(result.documents, sent.hashes, sent.failed, result.submittedHashes);
+    } catch (err) {
+      console.info(`[Ethyra] ${name}: course files left out:`, err);
+    }
   });
 
   const files = [];
@@ -365,6 +428,9 @@ async function collectExport({ origin, extensionVersion, onProgress = () => {}, 
     files.push(...result.files);
     if (result.entry) manifestCourses.push(result.entry);
     if (result.sentPerFile) sentPerFile = true;
+  }
+  if (documentsCapped) {
+    warnings.push("Some course files were left out to keep the export within Ethyra's size limit. All of your own work was sent.");
   }
 
   const manifest = buildManifest({

@@ -56,10 +56,13 @@ Upstream mirrors an entire Canvas course to disk — course files, pages, module
 discussions, announcements, quizzes — for teachers and students alike, and
 writes it as human-readable HTML or Markdown.
 
-This one collects **one student's own coursework only**, emits it as
-machine-readable JSON alongside the files, and uploads it to Ethyra. The scope is
-narrowed by configuration (`ethyra/profile.js`) rather than by deletion, so the
-code upstream maintains is still here and still mergeable.
+This one collects **one student's own coursework**, plus the structure and text
+of each course they submitted work in (syllabus, modules, pages, quiz metadata,
+outcomes, document files — read by `ethyra/structure.js` as data, not through
+upstream's mirror), emits it as machine-readable JSON alongside the files, and
+uploads it to Ethyra. Upstream's mirror stays off by configuration
+(`ethyra/profile.js`) rather than deletion, so the code upstream maintains is
+still here and still mergeable.
 
 Third-party dependencies
 ------------------------
@@ -93,6 +96,16 @@ What is read:
                                        shown on the class window, never put in
                                        a prompt
     course identity                    name, code and term; the student's name
+    course structure                   per course with submitted work, as the
+                                       student sees it: syllabus, modules and
+                                       their items (titles, types, due dates,
+                                       locked ones included), published pages,
+                                       quiz metadata (title, description, due
+                                       date, question count — never questions
+                                       or answers), outcome titles and
+                                       descriptions, and document-type course
+                                       files (no media), sent only by per-file
+                                       upload (ethyra/structure.js)
 
 What is not read — enforced at the Canvas request rather than by a filter
 afterwards, so no later change can forget it:
@@ -100,6 +113,9 @@ afterwards, so no later change can forget it:
     instructor comments                the feedback thread on a submission
     rubric marks                       how an instructor scored the student
     class statistics                   mean, median and quartiles
+    quiz questions and answers         only the quiz list is read
+    discussions and announcements      not requested
+    video, audio and other media       never sent
 
 `score_statistics`, `submission_comments` and `rubric_assessment` are never
 asked for, and `ethyra/manifest.js` has no field to carry them if they arrived.
