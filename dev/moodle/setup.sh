@@ -26,6 +26,10 @@ php() { docker compose exec -T -u www-data moodle php "$@"; }
 # 3. Install once. config.php is written into src/ and is the marker.
 if [ ! -f src/config.php ]; then
   echo "Installing Moodle (a few minutes on first run) ..."
+  # The installer runs as www-data and writes config.php into src/. On native
+  # Linux the bind mount keeps host ownership, so let it write to that one
+  # directory (not recursive: config.php is the only file it creates there).
+  chmod a+w src
   php admin/cli/install.php \
     --non-interactive --agree-license \
     --lang=en \

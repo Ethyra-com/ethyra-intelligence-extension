@@ -4,7 +4,8 @@
 # setup.sh, gitignored), served by Moodle HQ's PHP image. That image is
 # multi-arch, so it runs native on Apple Silicon.
 #
-# Ports: 9200 Moodle, 9201 Mailpit (every email Moodle sends lands there).
+# Ports: 9200 Moodle, 9201 Mailpit (every email Moodle sends lands there),
+# both on localhost only: the logins are documented and debug output is on.
 
 name: ethyra-moodle
 
@@ -29,7 +30,7 @@ services:
   moodle:
     <<: *moodle-php
     ports:
-      - "9200:80"
+      - "127.0.0.1:9200:80"
 
   # Moodle's equivalent of canvas.job: ad-hoc tasks (grade pushes, file
   # conversion, notifications) only run from cron. The loop tolerates the
@@ -62,7 +63,7 @@ services:
   moodle-mail:
     image: axllent/mailpit:latest
     ports:
-      - "9201:8025"
+      - "127.0.0.1:9201:8025"
 
 volumes:
   moodledata:

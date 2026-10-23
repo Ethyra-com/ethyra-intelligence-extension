@@ -18,5 +18,10 @@ unzip -q "$STUDENT_ZIP" -d fixtures
 rm -rf fixtures/__MACOSX
 
 # Recreates the containers if the fixtures mount is new; otherwise a no-op.
-docker compose up -d --wait >/dev/null 2>&1
+# Compose reports progress on stderr, so its output is shown only on failure.
+if ! out="$(docker compose up -d --wait 2>&1)"; then
+  printf '%s\n' "$out" >&2
+  echo "Could not start the Moodle stack (is Docker running? did ./setup.sh run?)." >&2
+  exit 1
+fi
 docker compose exec -T -u www-data moodle php /ethyra/seed.php
