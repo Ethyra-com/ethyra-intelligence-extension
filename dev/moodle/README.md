@@ -49,8 +49,9 @@ page lands on the login screen, as on a school's Moodle.
 | `moodle-mail` | Mailpit, so outgoing mail succeeds instead of erroring |
 
 Moodle is not baked into an image. It is the source tree in `src/`, cloned
-shallow by `setup.sh` and gitignored. `src/config.php` is written by the
-installer and marks the site as installed. To try another version, set
+shallow by `setup.sh` and gitignored. `setup.sh` writes `src/config.php` itself
+(as you, so nothing in `src/` has to be writable by the container) and installs
+the database only if Moodle's tables are missing. To try another version, set
 `MOODLE_BRANCH` (for example `MOODLE_500_STABLE`) on a fresh reset. Moodle 5.1+
 moves the web root to `src/public`, so the volume mount would need to change too.
 
@@ -134,8 +135,7 @@ entirely, so the extension must not depend on tokens or REST.
 
 ```bash
 docker compose down -v      # wipes the database and moodledata
-rm src/config.php           # so setup.sh installs again
-./setup.sh && ./seed.sh
+./setup.sh && ./seed.sh     # setup.sh installs again when the tables are gone
 ```
 
 Add `rm -rf src` to re-clone the source as well, for example to pick up a
