@@ -28,8 +28,10 @@ if [ ! -f src/config.php ]; then
   echo "Installing Moodle (a few minutes on first run) ..."
   # The installer runs as www-data and writes config.php into src/. On native
   # Linux the bind mount keeps host ownership, so let it write to that one
-  # directory (not recursive: config.php is the only file it creates there).
+  # directory (not recursive: config.php is the only file it creates there)
+  # for the length of the install only, even if the install fails.
   chmod a+w src
+  trap 'chmod go-w src' EXIT
   php admin/cli/install.php \
     --non-interactive --agree-license \
     --lang=en \
@@ -41,6 +43,8 @@ if [ ! -f src/config.php ]; then
     --adminuser=admin --adminpass="$ADMIN_PASS" \
     --adminemail=admin@example.com \
     --supportemail=admin@example.com
+  chmod go-w src
+  trap - EXIT
 fi
 
 # 4. Dev settings and the admin web service token (last line of output).
