@@ -47,9 +47,11 @@ require_once(__DIR__ . '/lib/setup.php');
 PHP
 chmod 644 src/config.php   # Apache (www-data) reads it; a private umask would hide it.
 
-# 4. Install the database once. Moodle's tables are the marker.
-installed="$(docker compose exec -T moodle-db psql -U moodle -d moodle -tAc "select to_regclass('mdl_config')")"
-if [ -z "$installed" ]; then
+# 4. Install the database once. Moodle creates its tables before the rest of
+# the install finishes, so tables alone don't mean installed: setup.sh records
+# its own marker only after the installer succeeds.
+sql() { docker compose exec -T moodle-db psql -U moodle -d moodle -tAc "$1"; }
+if [ -z "$(sql "select to_regclass('mdl_config')")" ]; then
   echo "Installing Moodle (a few minutes on first run) ..."
   php admin/cli/install_database.php \
     --agree-license --lang=en \
@@ -57,6 +59,11 @@ if [ -z "$installed" ]; then
     --adminuser=admin --adminpass="$ADMIN_PASS" \
     --adminemail=admin@example.com \
     --supportemail=admin@example.com
+  php admin/cli/cfg.php --name=ethyradev_installed --set=1
+elif [ -z "$(sql "select 1 from mdl_config where name = 'ethyradev_installed'")" ]; then
+  echo "The database holds a partial Moodle install (an earlier install stopped part way)." >&2
+  echo "Reset it and run setup again:  docker compose down -v && ./setup.sh" >&2
+  exit 1
 fi
 
 # 5. Dev settings and the admin web service token (last line of output).
