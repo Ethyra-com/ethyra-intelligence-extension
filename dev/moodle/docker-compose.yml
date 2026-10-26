@@ -1,0 +1,70 @@
+# A local Moodle 4.5 to build the extension against. See README.md.
+#
+# Moodle itself is not in an image: it is the source tree in ./src (cloned by
+# setup.sh, gitignored), served by Moodle HQ's PHP image. That image is
+# multi-arch, so it runs native on Apple Silicon.
+#
+# Ports: 9200 Moodle, 9201 Mailpit (every email Moodle sends lands there),
+# both on localhost only: the logins are documented and debug output is on.
+
+name: ethyra-moodle
+
+x-moodle-php: &moodle-php
+  image: moodlehq/moodle-php-apache:8.3
+  volumes:
+    - ./src:/var/www/html
+    - ./cli:/ethyra:ro
+    - ./fixtures:/fixtures:ro
+    - moodledata:/var/www/moodledata
+  environment:
+    # Not used by Moodle directly; setup.sh passes these to the installer.
+    MOODLE_DB_HOST: moodle-db
+    MOODLE_DB_NAME: moodle
+    MOODLE_DB_USER: moodle
+    MOODLE_DB_PASS: moodle
+  depends_on:
+    moodle-db:
+      condition: service_healthy
+
+services:
+  moodle:
+    <<: *moodle-php
+    ports:
+      - "127.0.0.1:9200:80"
+
+  # Moodle's equivalent of canvas.job: ad-hoc tasks (grade pushes, file
+  # conversion, notifications) only run from cron. The loop tolerates the
+  # site not being installed yet. The image's entrypoint must run as root, so
+  # the container does too and cron itself drops to www-data.
+  moodle-cron:
+    <<: *moodle-php
+    command: >
+      sh -c 'while true; do
+        if [ -f /var/www/html/config.php ]; then
+          su www-data -s /bin/sh -c "php /var/www/html/admin/cli/cron.php" >/dev/null 2>&1;
+        fi;
+        sleep 60;
+      done'
+
+  moodle-db:
+    image: postgres:16
+    environment:
+      POSTGRES_DB: moodle
+      POSTGRES_USER: moodle
+      POSTGRES_PASSWORD: moodle
+    volumes:
+      - moodlePostgresData:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U moodle -d moodle"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+  moodle-mail:
+    image: axllent/mailpit:latest
+    ports:
+      - "127.0.0.1:9201:8025"
+
+volumes:
+  moodledata:
+  moodlePostgresData:

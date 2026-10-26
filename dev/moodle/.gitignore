@@ -1,0 +1,5 @@
+# Moodle source, cloned by setup.sh. Ours to run, not to vendor.
+src/
+
+# Coursework unzipped by seed.sh from the teacher and student zips.
+fixtures/
