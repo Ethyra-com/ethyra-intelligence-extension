@@ -51,6 +51,12 @@ chmod 644 src/config.php   # Apache (www-data) reads it; a private umask would h
 # the install finishes, so tables alone don't mean installed: setup.sh records
 # its own marker only after the installer succeeds.
 sql() { docker compose exec -T moodle-db psql -U moodle -d moodle -tAc "$1"; }
+# Written straight to the table: cfg.php skips the write when Moodle's config
+# cache already holds the value, even if the row itself is gone.
+mark_installed() {
+  sql "insert into mdl_config (name, value) values ('ethyradev_installed', '1')
+       on conflict (name) do update set value = '1'" >/dev/null
+}
 if [ -z "$(sql "select to_regclass('mdl_config')")" ]; then
   echo "Installing Moodle (a few minutes on first run) ..."
   php admin/cli/install_database.php \
@@ -59,11 +65,17 @@ if [ -z "$(sql "select to_regclass('mdl_config')")" ]; then
     --adminuser=admin --adminpass="$ADMIN_PASS" \
     --adminemail=admin@example.com \
     --supportemail=admin@example.com
-  php admin/cli/cfg.php --name=ethyradev_installed --set=1
+  mark_installed
 elif [ -z "$(sql "select 1 from mdl_config where name = 'ethyradev_installed'")" ]; then
-  echo "The database holds a partial Moodle install (an earlier install stopped part way)." >&2
-  echo "Reset it and run setup again:  docker compose down -v && ./setup.sh" >&2
-  exit 1
+  if [ -n "$(sql "select 1 from mdl_config where name = 'forcelogin' and value = '1'")" ]; then
+    # Installed before the marker existed: forcelogin is only set by
+    # configure.php, which setup.sh has always run after the installer returned.
+    mark_installed
+  else
+    echo "The database holds a partial Moodle install (an earlier install stopped part way)." >&2
+    echo "Reset it and run setup again:  docker compose down -v && ./setup.sh" >&2
+    exit 1
+  fi
 fi
 
 # 5. Dev settings and the admin web service token (last line of output).
