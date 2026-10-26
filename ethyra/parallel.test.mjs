@@ -50,7 +50,7 @@ function loadCollect(names, { delayFor = () => 5 } = {}) {
       }
     },
   });
-  for (const f of ["ethyra/profile.js", "ethyra/manifest.js", "helpers.js", "ethyra/collect.js"]) {
+  for (const f of ["ethyra/profile.js", "ethyra/manifest.js", "helpers.js", "ethyra/structure.js", "ethyra/collect.js"]) {
     vm.runInContext(readFileSync(join(ROOT, f), "utf8"), sandbox, { filename: f });
   }
   return { sandbox, stats };

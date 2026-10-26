@@ -12,16 +12,16 @@
  *
  * ── Why the mirror is off ─────────────────────────────────────────────
  *
- * Course files, pages, modules, discussions, announcements, quizzes and the
- * syllabus are teacher- or peer-authored. None of them is evidence about this
- * student, and the backend measures proficiency from the text of the files it
- * is given — so a course mirror is not merely wasted bandwidth, it is a way to
- * produce a proficiency level, with a supporting quote, for prose the student
- * never wrote.
+ * Upstream's mirror writes course files, pages, modules, the syllabus and the
+ * rest as rendered files at the archive root — entries no assignment claims,
+ * which the backend drops. They are also teacher- or peer-authored, and the
+ * backend measures proficiency from the text of a SUBMISSION; a course page read
+ * as one is a level, with a quote, for prose the student never wrote.
  *
- * It is also the difference between "export my own coursework for analysis" and
- * "download a Canvas course, and also upload it somewhere", and only the first
- * survives the Chrome Web Store's single-purpose rule with a straight face.
+ * Since 2026-10-13 the course's structure and text DO travel, for the per-course
+ * learning map — but as data under the manifest's `structure` key, read by
+ * `ethyra/structure.js`, never as submissions. These switches stay off.
+ * Discussions and announcements are not read at all.
  *
  * ── Why `grades` is off despite us wanting grades ─────────────────────
  *

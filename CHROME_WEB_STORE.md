@@ -47,7 +47,8 @@ It must be the popup's first screen, shown before the sign-up and sign-in forms,
 **Single purpose**
 
 > Exports a student's own Canvas coursework — their submissions, the assignment
-> instructions and rubrics they were given, and their own grades — to Ethyra,
+> instructions and rubrics they were given, their own grades, and the structure
+> of each course they took (syllabus, modules, pages, posted documents) — to Ethyra,
 > where it is analyzed to build their learning profile against the
 > ACT College and Career Readiness Standards.
 
@@ -72,7 +73,7 @@ It must be the popup's first screen, shown before the sign-up and sign-in forms,
 |---|---|---|
 | Personally identifiable information | ✅ | Name, email address |
 | Authentication information | ✅ | Ethyra password at sign-in; stored refresh token |
-| Website content | ✅ | Coursework, instructions, rubrics, grades read from Canvas |
+| Website content | ✅ | Coursework, instructions, rubrics, grades, and course syllabus, modules, pages, quiz metadata, outcomes and document files read from Canvas |
 | Health, Financial and payment, Personal communications, Location, Web history, User activity | ❌ | Not collected. Instructor comments aren't read, and the extension doesn't run on other pages. |
 
 **Certifications.** Tick all three:

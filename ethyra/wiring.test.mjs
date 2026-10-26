@@ -145,6 +145,16 @@ const REQUIRED = [
   ["createExportReporter", "ethyra/upload.js", "ethyra/run-export.js"],
   ["uploadMultipart", "ethyra/upload.js", "ethyra/run-export.js"],
   ["pruneFailed", "ethyra/archive.js", "ethyra/collect.js"],
+  // course structure (2026-10-13)
+  ["fetchWithRetry", "canvas-api.js", "ethyra/structure.js"],
+  ["parsePaginationLink", "helpers.js", "ethyra/structure.js"],
+  ["sanitizeFilename", "helpers.js", "ethyra/structure.js"],
+  ["ETHYRA_MAX_FILE_BYTES", "ethyra/profile.js", "ethyra/structure.js"],
+  ["ETHYRA_UNREADABLE_EXTENSIONS", "ethyra/profile.js", "ethyra/structure.js"],
+  ["timestamp", "ethyra/manifest.js", "ethyra/structure.js"],
+  ["fetchCourseStructure", "ethyra/structure.js", "ethyra/collect.js"],
+  ["courseDocumentEntries", "ethyra/structure.js", "ethyra/collect.js"],
+  ["structureFiles", "ethyra/structure.js", "ethyra/collect.js"],
   ["fetchFileBytes", "ethyra/archive.js", "ethyra/upload.js"],
 ];
 
@@ -1494,7 +1504,7 @@ test("the offscreen page supplies the chrome.* the shared code calls", () => {
   // Any other chrome.* API in the bundle the page loads must be messaging, or
   // sit where Ethyra mode never goes. Listed so a new call is a decision.
   const allowed = /chrome\.runtime\.(sendMessage|onMessage|id|lastError|getURL|getManifest)\b/;
-  const reachable = ["canvas-api.js", "helpers.js", "ethyra/collect.js", "ethyra/archive.js", "ethyra/upload.js", "ethyra/run-export.js"];
+  const reachable = ["canvas-api.js", "helpers.js", "ethyra/structure.js", "ethyra/collect.js", "ethyra/archive.js", "ethyra/upload.js", "ethyra/run-export.js"];
   for (const file of reachable) {
     for (const [call] of code(file).matchAll(/chrome\.[a-zA-Z]+\.[a-zA-Z]+/g)) {
       assert.match(call, allowed, `${file} calls ${call}, which an offscreen page does not have`);
@@ -1509,4 +1519,39 @@ test("the offscreen page supplies the chrome.* the shared code calls", () => {
       `downloader.js:${i + 1} uses chrome.storage where Ethyra mode can reach it`
     );
   });
+});
+
+test("course structure is collected as data, and never quiz questions, discussions or media", () => {
+  // Reversed 2026-10-13: the extension now reads each course's syllabus,
+  // modules, pages, quiz metadata, outcomes and document files, for the
+  // per-course learning map. What must still never be asked for is pinned here.
+  const structure = code("ethyra/structure.js");
+  for (const endpoint of ["/questions", "/submissions", "discussion_topics", "announcements", "/users", "/enrollments"]) {
+    assert.ok(!structure.includes(endpoint), `structure.js must not request ${endpoint}`);
+  }
+  for (const endpoint of ["syllabus_body", "/modules?include[]=items", "/pages?per_page=100&published=true", "/quizzes?per_page=100", "/outcome_group_links?per_page=100", "/files?per_page=100"]) {
+    assert.ok(structure.includes(endpoint), `structure.js no longer reads ${endpoint}`);
+  }
+  assert.match(structure, /if \(\/\^\(video\|audio\|image\)\\\/\/\.test\(type\)\) return false;/, "media is never a course document");
+
+  // Read as manifest data, not through upstream's mirror: its root-level files
+  // would be unclaimed archive entries. The switches stay off.
+  const disabled = [...code("ethyra/profile.js").matchAll(/^\s*(\w+):\s*false\b/gm)].map((m) => m[1]);
+  for (const type of ["files", "pages", "modules", "quizzes", "syllabus", "discussions", "announcements"]) {
+    assert.ok(disabled.includes(type), `upstream's ${type} mirror must stay off`);
+  }
+
+  // Course documents go after the work, as optional, and only per file.
+  const collect = code("ethyra/collect.js");
+  assert.match(collect, /optional: true/);
+  assert.match(collect, /const perFile = results\.some\(\(r\) => r\.sentPerFile\)/);
+  assert.match(code("ethyra/upload.js"), /if \(optional\) return \{ failed, hashes, capped: true \};/);
+
+  // Every place a student is told what is read says so.
+  const consent = read(manifest.action.default_popup);
+  assert.match(consent, /syllabus, modules, pages/);
+  assert.match(consent, /never the questions/);
+  assert.match(read("LEGAL.md"), /Quiz questions and answers are never read/);
+  assert.match(read("NOTICE"), /course structure/);
+  assert.match(read(manifest.background.service_worker), /const CONSENT_VERSION = "2026-10-13"/, "a wider read must ask for consent again");
 });

@@ -74,7 +74,7 @@ const EXPORT_STATE_KEY = "ethyra_export_state";
  * extension, not an account) and goes with an uninstall.
  */
 const CONSENT_KEY = "ethyra_consent";
-const CONSENT_VERSION = "2026-09-29";
+const CONSENT_VERSION = "2026-10-13";
 const CONSENT_REQUIRED = "Please review and agree to how Ethyra uses your data first.";
 
 async function hasConsent() {
